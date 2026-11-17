@@ -72,7 +72,7 @@ The extension compares the jars in the extensions folder with the running extens
 | Change | When |
 |---|---|
 | Install | A jar for an extension that does not run yet. |
-| Update | The content of the jar of a running extension changed. The file time does not matter. |
+| Update | The content of the jar of a running extension differs from the content at startup or at the last rescan. |
 | Replace | The jar of a running extension has a new file name, for example after a version change. |
 | Uninstall | The jar of a running extension is gone. |
 
