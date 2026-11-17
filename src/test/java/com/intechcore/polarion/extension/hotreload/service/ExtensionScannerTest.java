@@ -169,6 +169,18 @@ class ExtensionScannerTest {
     }
 
     @Test
+    void keepsABundleWhoseJarCannotBeReadNow() throws IOException {
+        Path jar = Files.createDirectories(installDir.resolve("extensions/ext/eclipse/plugins")).resolve("ext-1.0.jar");
+        Files.writeString(jar, "half copied");
+        bundle("my.ext", ExtensionScanner.installLocation(jar), 0);
+
+        ExtensionScanner scanner = new ExtensionScanner(bundleContext);
+
+        assertThat(scanner.scan(SELF)).isEmpty();
+        assertThat(scanner.getWarnings()).singleElement().asString().startsWith("cannot read ext-1.0.jar (");
+    }
+
+    @Test
     void ignoresBundlesOutsideTheExtensionsFolder() {
         Bundle platform = bundle("com.polarion.platform", "reference:file:plugins/platform.jar", 0);
         Bundle remote = bundle("remote", "http://example.com/remote.jar", 0);

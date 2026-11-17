@@ -14,9 +14,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.jar.JarFile;
 import java.util.jar.Manifest;
 import java.util.stream.Stream;
@@ -34,6 +36,7 @@ public class ExtensionScanner {
     private final Path installDir;
     private final Path extensionsDir;
     private final List<String> warnings = new ArrayList<>();
+    private final Set<Path> unreadableJars = new HashSet<>();
 
     public ExtensionScanner(@NotNull BundleContext bundleContext) {
         this.bundleContext = bundleContext;
@@ -61,7 +64,8 @@ public class ExtensionScanner {
             }
         });
         installed.forEach((symbolicName, bundle) -> {
-            if (!jars.containsKey(symbolicName) && !symbolicName.equals(ownSymbolicName)) {
+            // A jar that cannot be read now, for example while it is copied, is not a deleted jar.
+            if (!jars.containsKey(symbolicName) && !symbolicName.equals(ownSymbolicName) && !unreadableJars.contains(locationPath(bundle))) {
                 changes.add(new BundleChange(BundleChange.Type.UNINSTALL, symbolicName, null, bundle));
             }
         });
@@ -191,7 +195,7 @@ public class ExtensionScanner {
      * @return the manifest of a bundle jar, or {@code null} for a source bundle, a plain jar or an unreadable file
      */
     @Nullable
-    private static Manifest bundleManifest(@NotNull Path jar) {
+    private Manifest bundleManifest(@NotNull Path jar) {
         try (JarFile jarFile = new JarFile(jar.toFile())) {
             Manifest manifest = jarFile.getManifest();
             if (manifest == null || manifest.getMainAttributes().getValue("Eclipse-SourceBundle") != null
@@ -200,6 +204,8 @@ public class ExtensionScanner {
             }
             return manifest;
         } catch (IOException e) {
+            unreadableJars.add(jar.normalize());
+            warnings.add("cannot read " + jar.getFileName() + " (" + e.getMessage() + "), skipped");
             return null;
         }
     }
