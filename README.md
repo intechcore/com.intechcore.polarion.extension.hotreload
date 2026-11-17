@@ -72,11 +72,15 @@ The extension compares the jars in the extensions folder with the running extens
 | Change | When |
 |---|---|
 | Install | A jar for an extension that does not run yet. |
-| Update | The jar of a running extension is newer than the running extension. |
+| Update | The content of the jar of a running extension changed. The file time does not matter. |
 | Replace | The jar of a running extension has a new file name, for example after a version change. |
 | Uninstall | The jar of a running extension is gone. |
 
 Extensions that depend on a changed extension are refreshed too. The report lists every step.
+
+When two jars have the same `Bundle-SymbolicName`, the jar with the higher `Bundle-Version` is used. The report shows a warning. Remove the other jar.
+
+When a step fails, the extension puts back every extension that still resolves. The report lists the errors.
 
 ## What is refreshed
 
@@ -85,9 +89,10 @@ Extensions that depend on a changed extension are refreshed too. The report list
 | Web applications (`com.polarion.portal.tomcat.webapps` in `plugin.xml`) | Yes |
 | Administration pages (`com.polarion.xray.webui.administrationPageExtenders`) | Yes |
 | Workflow functions (`com.polarion.alm.tracker.workflow.functions`) | Yes |
+| Workflow conditions, validators and signature policies | Existing ones use the new class. New ones need a restart. |
 | LiveReport page widgets (`com.polarion.alm.richpages.widgets`) | Yes |
-| Velocity context of LiveReport pages (`com.polarion.alm.richpages.velocityContext`) | Yes |
-| Velocity context of wiki pages (`com.polarion.alm.wiki.renderingContext`) | Yes |
+| Velocity context of LiveReport pages (`com.polarion.alm.richpages.velocityContext`) | `instance:` values only. Other values keep the startup object. |
+| Velocity context of wiki pages (`com.polarion.alm.wiki.renderingContext`) | `instance:` values only. Other values keep the startup object. |
 | Navigation extenders (`com.polarion.xray.webui.customNavigationExtenders`) | Yes |
 | HiveMind service implementations and interceptors (`<implementation>`) | No, restart required |
 | Guice modules (`Guice-Modules` manifest header) | No, restart required |

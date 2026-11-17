@@ -11,6 +11,7 @@ import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
 import org.osgi.framework.Bundle;
 import org.osgi.framework.BundleContext;
+import org.osgi.framework.BundleException;
 import org.osgi.framework.FrameworkEvent;
 import org.osgi.framework.FrameworkListener;
 import org.osgi.framework.FrameworkUtil;
@@ -38,6 +39,7 @@ import java.util.jar.Manifest;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -73,7 +75,10 @@ class RedeployServiceTest {
     private List<BundleChange> changes = List.of();
     private final List<Bundle> nonExtensionBundles = new ArrayList<>();
     private Collection<Bundle> closure = List.of();
-    private FrameworkEvent refreshOutcome;
+    private FrameworkEvent refreshError;
+    private final List<FrameworkListener> frameworkListeners = new ArrayList<>();
+    private final List<String> scannerWarnings = new ArrayList<>();
+    private final Map<Bundle, Path> bundleJars = new HashMap<>();
     private boolean tomcatAccepts = true;
 
     private MockedStatic<FrameworkUtil> frameworkUtil;
@@ -93,10 +98,16 @@ class RedeployServiceTest {
         when(systemBundle.adapt(FrameworkWiring.class)).thenReturn(frameworkWiring);
         when(context.getBundles()).thenAnswer(invocation -> allBundles.toArray(new Bundle[0]));
         when(frameworkWiring.getDependencyClosure(anyCollection())).thenAnswer(invocation -> closure);
+        doAnswer(invocation -> frameworkListeners.add(invocation.getArgument(0))).when(context).addFrameworkListener(any());
+        doAnswer(invocation -> frameworkListeners.remove(invocation.<FrameworkListener>getArgument(0))).when(context).removeFrameworkListener(any());
+        // As Equinox does: errors go to the framework listeners, the refresh listener gets PACKAGES_REFRESHED only.
         doAnswer(invocation -> {
             FrameworkListener listener = invocation.getArgument(1);
             Bundle first = invocation.<Collection<Bundle>>getArgument(0).iterator().next();
-            listener.frameworkEvent(refreshOutcome != null ? refreshOutcome : new FrameworkEvent(FrameworkEvent.PACKAGES_REFRESHED, first, null));
+            if (refreshError != null) {
+                List.copyOf(frameworkListeners).forEach(l -> l.frameworkEvent(refreshError));
+            }
+            listener.frameworkEvent(new FrameworkEvent(FrameworkEvent.PACKAGES_REFRESHED, first, null));
             return null;
         }).when(frameworkWiring).refreshBundles(anyCollection(), any(FrameworkListener[].class));
         when(frameworkWiring.resolveBundles(anyCollection())).thenReturn(true);
@@ -109,6 +120,8 @@ class RedeployServiceTest {
 
         scanners = mockConstruction(ExtensionScanner.class, (scanner, ctx) -> {
             when(scanner.scan("my.self")).thenAnswer(invocation -> changes);
+            when(scanner.getWarnings()).thenAnswer(invocation -> scannerWarnings);
+            when(scanner.jarOf(any())).thenAnswer(invocation -> bundleJars.get(invocation.<Bundle>getArgument(0)));
             when(scanner.isExtensionBundle(any())).thenAnswer(invocation -> {
                 Bundle bundle = invocation.getArgument(0);
                 return bundle != self && !nonExtensionBundles.contains(bundle);
@@ -128,6 +141,7 @@ class RedeployServiceTest {
         scanners.close();
         frameworkUtil.close();
         allBundles.forEach(DescriptorCache::remove);
+        allBundles.forEach(JarFingerprints::remove);
     }
 
     @Test
@@ -181,8 +195,11 @@ class RedeployServiceTest {
         TomcatDeployer tomcat = tomcats.constructed().get(0);
         verify(tomcat).remove("polarion/com.intechcore.polarion.extension.admin-menu-organizer");
         ContributionInjector injector = injectors.constructed().get(0);
+        verify(injector).remove(any(), eq("my.ext"), any());
+        verify(injector).remove(any(), eq("my.dependent"), any());
         verify(injector).add(any(), eq(updated));
         verify(injector).add(any(), eq(dependent));
+        verify(injector).finish();
         assertThat(DescriptorCache.get(updated).getWebapps()).hasSize(1);
     }
 
@@ -195,6 +212,9 @@ class RedeployServiceTest {
         Bundle replaced = extension("my.replaced", 22);
         Bundle uninstalled = extension("my.gone", 23);
         when(context.installBundle(ExtensionScanner.installLocation(newJar))).thenReturn(installed);
+        Files.writeString(newJar, "new content");
+        bundleJars.put(installed, newJar);
+        JarFingerprints.put(uninstalled, newJar);
         when(context.installBundle(ExtensionScanner.installLocation(replacementJar))).thenReturn(replacement);
         doAnswer(invocation -> states.put(uninstalled, Bundle.UNINSTALLED)).when(uninstalled).uninstall();
         doAnswer(invocation -> states.put(replaced, Bundle.UNINSTALLED)).when(replaced).uninstall();
@@ -216,6 +236,8 @@ class RedeployServiceTest {
         verify(installed.adapt(BundleStartLevel.class)).setStartLevel(4);
         assertThat(DescriptorCache.get(uninstalled)).isNull();
         assertThat(DescriptorCache.get(installed)).isNotNull();
+        assertThat(JarFingerprints.get(installed)).isEqualTo(JarFingerprints.of(newJar));
+        assertThat(JarFingerprints.get(uninstalled)).isNull();
     }
 
     @Test
@@ -280,11 +302,88 @@ class RedeployServiceTest {
         Bundle bundle = extension("my.ext", 10);
         closure = List.of(bundle);
         changes = List.of(new BundleChange(BundleChange.Type.UPDATE, "my.ext", jarPath("my.ext.jar"), bundle));
-        refreshOutcome = new FrameworkEvent(FrameworkEvent.ERROR, bundle, new IllegalArgumentException("wiring"));
+        refreshError = new FrameworkEvent(FrameworkEvent.ERROR, bundle, new IllegalArgumentException("wiring"));
 
         RescanReport report = new RedeployService().rescan(true);
 
-        assertThat(report.errors()).containsExactly("IllegalStateException: Bundle refresh failed: wiring");
+        assertThat(report.errors()).containsExactly("refresh: my.ext: IllegalArgumentException: wiring");
+        assertThat(report.log()).contains("refresh finished", "context /polarion/my.ext added");
+        assertThat(frameworkListeners).isEmpty();
+    }
+
+    @Test
+    void putsTheBundlesBackWhenAFrameworkChangeFails() throws Exception {
+        Bundle failing = extension("my.failing", 10);
+        Bundle other = extension("my.other", 11);
+        doAnswer(invocation -> {
+            throw new BundleException("broken jar");
+        }).when(failing).update();
+        closure = List.of(failing, other);
+        changes = List.of(
+                new BundleChange(BundleChange.Type.UPDATE, "my.failing", jarPath("my.failing.jar"), failing),
+                new BundleChange(BundleChange.Type.UPDATE, "my.other", jarPath("my.other.jar"), other));
+
+        RescanReport report = new RedeployService().rescan(true);
+
+        assertThat(report.errors()).containsExactly("BundleException: broken jar");
+        assertThat(report.log()).contains(
+                "context /polarion/my.failing removed",
+                "context /polarion/my.other removed",
+                "refresh finished",
+                "context /polarion/my.failing added",
+                "context /polarion/my.other added");
+        verify(injectors.constructed().get(0)).finish();
+    }
+
+    @Test
+    void putsTheOtherBundlesBackWhenOneFailsToComeBack() throws Exception {
+        Bundle broken = extension("my.broken", 10);
+        Bundle other = extension("my.other", 11);
+        when(broken.getHeaders()).thenReturn(headers("Bundle-ActivationPolicy", "lazy"));
+        doAnswer(invocation -> {
+            throw new BundleException("activator failed");
+        }).when(broken).start(Bundle.START_ACTIVATION_POLICY);
+        closure = List.of(broken, other);
+        changes = List.of(new BundleChange(BundleChange.Type.UPDATE, "my.broken", jarPath("my.broken.jar"), broken));
+
+        RescanReport report = new RedeployService().rescan(true);
+
+        assertThat(report.errors()).containsExactly("my.broken: BundleException: activator failed");
+        assertThat(report.log()).contains("context /polarion/my.other added").doesNotContain("context /polarion/my.broken added");
+    }
+
+    @Test
+    void startsAReplacementOnlyWhenItsPredecessorWasStarted() throws Exception {
+        Path startedJar = jarPath("my.started-2.0.jar");
+        Path resolvedJar = jarPath("my.resolved-2.0.jar");
+        Bundle started = extension("my.started", 10);
+        Bundle resolved = extension("my.resolved", 11);
+        states.put(started, Bundle.ACTIVE);
+        Bundle startedReplacement = extension("my.started", 20);
+        Bundle resolvedReplacement = extension("my.resolved", 21);
+        when(context.installBundle(ExtensionScanner.installLocation(startedJar))).thenReturn(startedReplacement);
+        when(context.installBundle(ExtensionScanner.installLocation(resolvedJar))).thenReturn(resolvedReplacement);
+        doAnswer(invocation -> states.put(started, Bundle.UNINSTALLED)).when(started).uninstall();
+        doAnswer(invocation -> states.put(resolved, Bundle.UNINSTALLED)).when(resolved).uninstall();
+        closure = List.of(started, resolved);
+        changes = List.of(
+                new BundleChange(BundleChange.Type.REPLACE, "my.started", startedJar, started),
+                new BundleChange(BundleChange.Type.REPLACE, "my.resolved", resolvedJar, resolved));
+
+        RescanReport report = new RedeployService().rescan(true);
+
+        assertThat(report.errors()).isEmpty();
+        verify(startedReplacement).start(Bundle.START_ACTIVATION_POLICY);
+        verify(resolvedReplacement, never()).start(anyInt());
+    }
+
+    @Test
+    void logsTheScannerWarnings() {
+        scannerWarnings.add("two jars for my.ext: a.jar and b.jar, using b.jar; remove the other one");
+
+        RescanReport report = new RedeployService().rescan(false);
+
+        assertThat(report.log()).containsExactly("WARNING two jars for my.ext: a.jar and b.jar, using b.jar; remove the other one", "nothing changed");
     }
 
     @Test
@@ -298,7 +397,7 @@ class RedeployServiceTest {
         RescanReport report = new RedeployService().rescan(true);
 
         assertThat(report.errors()).containsExactly(
-                "IllegalStateException: my.new does not resolve; check its Require-Bundle and Import-Package");
+                "my.new does not resolve; check its Require-Bundle and Import-Package");
     }
 
     @Test
@@ -323,6 +422,7 @@ class RedeployServiceTest {
         when(broken.getEntry("plugin.xml")).thenReturn(file("broken.xml", "<plugin>"));
         Bundle gone = extension("my.gone", 12);
         states.put(gone, Bundle.UNINSTALLED);
+        bundleJars.put(extension, Files.writeString(tempDir.resolve("my.ext.jar"), "content"));
 
         try (MockedStatic<ContributionInjector> lazy = mockStatic(ContributionInjector.class)) {
             lazy.when(ContributionInjector::buildLazyServices).thenThrow(new IllegalStateException("no tracker"));
@@ -331,6 +431,7 @@ class RedeployServiceTest {
         }
 
         assertThat(DescriptorCache.get(extension)).isNotNull();
+        assertThat(JarFingerprints.get(extension)).isNotNull();
         assertThat(DescriptorCache.get(broken)).isNull();
         assertThat(DescriptorCache.get(gone)).isNull();
         assertThat(DescriptorCache.get(self)).isNull();

@@ -32,6 +32,7 @@ class ExtensionScannerTest {
 
     private String previousInstallArea;
     private BundleContext bundleContext;
+    private long nextBundleId = 100;
 
     @BeforeEach
     void setUp() {
@@ -43,6 +44,7 @@ class ExtensionScannerTest {
 
     @AfterEach
     void tearDown() {
+        Arrays.stream(bundleContext.getBundles()).forEach(JarFingerprints::remove);
         if (previousInstallArea == null) {
             System.clearProperty(INSTALL_AREA);
         } else {
@@ -80,6 +82,57 @@ class ExtensionScannerTest {
         bundle("my.ext", ExtensionScanner.installLocation(jar), jar.toFile().lastModified());
 
         assertThat(new ExtensionScanner(bundleContext).scan(SELF)).isEmpty();
+    }
+
+    @Test
+    void updatesABundleWhoseJarContentChangedUnderAnOlderTime() throws IOException {
+        Path installedCopy = Files.writeString(installDir.resolve("installed.jar"), "the installed content");
+        Path jar = jar("ext", "ext-1.0.jar", "my.ext", false);
+        Bundle bundle = bundle("my.ext", ExtensionScanner.installLocation(jar), jar.toFile().lastModified() + 60_000);
+        JarFingerprints.put(bundle, installedCopy);
+
+        assertThat(new ExtensionScanner(bundleContext).scan(SELF))
+                .containsExactly(new BundleChange(BundleChange.Type.UPDATE, "my.ext", jar.normalize(), bundle));
+    }
+
+    @Test
+    void leavesABundleWithTheSameContentAloneWhateverTheTime() throws IOException {
+        Path jar = jar("ext", "ext-1.0.jar", "my.ext", false);
+        Bundle bundle = bundle("my.ext", ExtensionScanner.installLocation(jar), 0);
+        JarFingerprints.put(bundle, jar);
+
+        assertThat(new ExtensionScanner(bundleContext).scan(SELF)).isEmpty();
+    }
+
+    @Test
+    void picksTheHigherBundleVersionWhateverTheFileNames() throws IOException {
+        Path newer = jar("ext", "ext-1.10.0.jar", "my.ext", "1.10.0");
+        jar("ext", "ext-1.9.0.jar", "my.ext", "1.9.0");
+        jar("other", "other-a.jar", "my.other", "1.0.0");
+        Path otherNewer = jar("other", "other-b.jar", "my.other", "2.0.0");
+        jar("bad", "bad-1.jar", "my.bad", "not a version");
+        Path badSecond = jar("bad", "bad-2.jar", "my.bad", "1.0.0");
+
+        ExtensionScanner scanner = new ExtensionScanner(bundleContext);
+
+        assertThat(scanner.scan(SELF)).extracting(BundleChange::jar)
+                .containsExactlyInAnyOrder(badSecond.normalize(), newer.normalize(), otherNewer.normalize());
+        assertThat(scanner.getWarnings()).containsExactly(
+                "two jars for my.bad: bad-1.jar and bad-2.jar, using bad-2.jar; remove the other one",
+                "two jars for my.ext: ext-1.10.0.jar and ext-1.9.0.jar, using ext-1.10.0.jar; remove the other one",
+                "two jars for my.other: other-a.jar and other-b.jar, using other-b.jar; remove the other one");
+    }
+
+    @Test
+    void returnsTheJarABundleCameFrom() throws IOException {
+        Path jar = jar("ext", "ext-1.0.jar", "my.ext", false);
+        Bundle bundle = bundle("my.ext", ExtensionScanner.installLocation(jar), 0);
+        Bundle remote = bundle("remote", "http://example.com/remote.jar", 0);
+
+        ExtensionScanner scanner = new ExtensionScanner(bundleContext);
+
+        assertThat(scanner.jarOf(bundle)).isEqualTo(jar.normalize());
+        assertThat(scanner.jarOf(remote)).isNull();
     }
 
     @Test
@@ -147,13 +200,24 @@ class ExtensionScannerTest {
         assertThat(new ExtensionScanner(bundleContext).scan(SELF)).isEmpty();
     }
 
+    private Path jar(String extension, String fileName, String symbolicName, String version) throws IOException {
+        return jar(extension, fileName, symbolicName, false, version);
+    }
+
     private Path jar(String extension, String fileName, String symbolicName, boolean sourceBundle) throws IOException {
+        return jar(extension, fileName, symbolicName, sourceBundle, null);
+    }
+
+    private Path jar(String extension, String fileName, String symbolicName, boolean sourceBundle, String version) throws IOException {
         Path plugins = Files.createDirectories(installDir.resolve("extensions").resolve(extension).resolve("eclipse/plugins"));
         Path jar = plugins.resolve(fileName);
         Manifest manifest = new Manifest();
         manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
         if (symbolicName != null) {
             manifest.getMainAttributes().putValue("Bundle-SymbolicName", symbolicName);
+        }
+        if (version != null) {
+            manifest.getMainAttributes().putValue("Bundle-Version", version);
         }
         if (sourceBundle) {
             manifest.getMainAttributes().putValue("Eclipse-SourceBundle", "my.ext");
@@ -169,6 +233,7 @@ class ExtensionScannerTest {
         when(bundle.getLocation()).thenReturn(location);
         when(bundle.getLastModified()).thenReturn(lastModified);
         when(bundle.getState()).thenReturn(Bundle.ACTIVE);
+        when(bundle.getBundleId()).thenReturn(nextBundleId++);
         Bundle[] previous = bundleContext.getBundles();
         Bundle[] all = Arrays.copyOf(previous, previous.length + 1);
         all[previous.length] = bundle;

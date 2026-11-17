@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -35,6 +36,9 @@ public class ContributionInjector {
 
     private final List<String> log;
 
+    /** Workflow holders of the old revisions, by bundle symbolic name, waiting for the class of the new revision. */
+    private final Map<String, Set<Object>> pendingWorkflowHolders = new LinkedHashMap<>();
+
     public ContributionInjector(@NotNull List<String> log) {
         this.log = log;
     }
@@ -42,14 +46,18 @@ public class ContributionInjector {
     /**
      * Removes what the old revision of a bundle contributed. Entries are matched by key, and object values also by
      * the class loader that loaded them, so stale objects go even when the new descriptor dropped their key.
+     * <p>
+     * Workflow holders stay in place: {@link #add} points them to the class of the new revision, and
+     * {@link #finish} removes those no new revision claims. Velocity and rendering context keys go only when
+     * {@link #add} can create them again, that is for {@code instance:} values.
      */
-    public void remove(@NotNull ExtensionDescriptor descriptor, @Nullable ClassLoader oldClassLoader) {
+    public void remove(@NotNull ExtensionDescriptor descriptor, @NotNull String symbolicName, @Nullable ClassLoader oldClassLoader) {
         removeAdministrationPages(descriptor);
         removeWidgets(descriptor.getWidgets().keySet(), oldClassLoader);
-        replaceVelocityContext(descriptor.getVelocityContext().keySet(), oldClassLoader, Map.of());
-        replaceRenderingContext(descriptor.getRenderingContext().keySet(), oldClassLoader, Map.of());
+        replaceVelocityContext(instanceKeys(descriptor.getVelocityContext()), oldClassLoader, Map.of());
+        replaceRenderingContext(instanceKeys(descriptor.getRenderingContext()), oldClassLoader, Map.of());
         removeNavigationExtenders(oldClassLoader);
-        removeWorkflowFunctions(oldClassLoader);
+        collectWorkflowHolders(symbolicName, oldClassLoader);
     }
 
     /**
@@ -73,7 +81,24 @@ public class ContributionInjector {
         replaceVelocityContext(Set.of(), null, instantiateValues(descriptor.getVelocityContext(), bundle));
         replaceRenderingContext(Set.of(), null, instantiateValues(descriptor.getRenderingContext(), bundle));
         addNavigationExtenders(descriptor.getNavigationExtenderClasses(), bundle);
+        repointWorkflowHolders(bundle);
         addWorkflowFunctions(descriptor.getWorkflowFunctions(), bundle);
+    }
+
+    /**
+     * Removes the workflow holders no new revision claimed: their bundle is uninstalled or did not come back.
+     */
+    public void finish() {
+        Set<Object> unclaimed = Collections.newSetFromMap(new IdentityHashMap<>());
+        pendingWorkflowHolders.values().forEach(unclaimed::addAll);
+        pendingWorkflowHolders.clear();
+        if (unclaimed.isEmpty()) {
+            return;
+        }
+        WorkflowContributions contributions = workflowContributions();
+        if (contributions != null) {
+            log.add("workflow contributions: removed " + contributions.remove(unclaimed));
+        }
     }
 
     // --- administration pages: AdministrationPageExtenderProvider (Guice singleton) ---
@@ -83,7 +108,7 @@ public class ContributionInjector {
      * those pages cannot work once the context is gone.
      */
     private void removeAdministrationPages(@NotNull ExtensionDescriptor descriptor) {
-        Set<String> keys = adminKeys(descriptor.getAdministrationPages());
+        Set<String> keys = adminKeys(newAdministrationPages(descriptor.getAdministrationPages()));
         List<String> urlPrefixes = descriptor.getWebapps().stream().map(w -> "/" + w.name() + "/").toList();
         if (keys.isEmpty() && urlPrefixes.isEmpty()) {
             return;
@@ -112,16 +137,15 @@ public class ContributionInjector {
             return;
         }
         Object provider = guiceInstance(UI_BUNDLE, "com.polarion.alm.administration.web.server.AdministrationPageExtenderProvider");
-        Set<String> newKeys = adminKeys(pages);
+        List<Object> added = newAdministrationPages(pages);
+        Set<String> newKeys = adminKeys(added);
         List<Object> result = new ArrayList<>();
         for (Object extender : currentAdministrationPages(provider)) {
             if (!newKeys.contains(adminKey(extender))) {
                 result.add(extender);
             }
         }
-        for (Map<String, String> page : pages) {
-            result.add(newAdministrationPage(page));
-        }
+        result.addAll(added);
         Reflect.call(provider, "setAdministrationPageExtenders", new LinkedHashSet<>(result));
         syncAdministrationPagesConfiguration(result);
         log.add("administration pages: added " + newKeys);
@@ -172,12 +196,17 @@ public class ContributionInjector {
      * from the parent node name.
      */
     @NotNull
-    private static Set<String> adminKeys(@NotNull List<Map<String, String>> pages) {
+    private static Set<String> adminKeys(@NotNull List<Object> extenders) {
         Set<String> keys = new LinkedHashSet<>();
-        for (Map<String, String> page : pages) {
-            keys.add(adminKey(newAdministrationPage(page)));
+        for (Object extender : extenders) {
+            keys.add(adminKey(extender));
         }
         return keys;
+    }
+
+    @NotNull
+    private static List<Object> newAdministrationPages(@NotNull List<Map<String, String>> pages) {
+        return pages.stream().map(ContributionInjector::newAdministrationPage).toList();
     }
 
     @NotNull
@@ -204,16 +233,21 @@ public class ContributionInjector {
 
     // --- rich page widgets: live map of the richPageWidgetContribution service ---
 
+    // Requests read the widget map at the same time, so it is replaced by a changed copy, never changed in place.
+
     private void removeWidgets(@NotNull Set<String> ids, @Nullable ClassLoader oldClassLoader) {
-        Map<String, Object> widgets = widgetMap();
+        Object registered = Reflect.call(widgetService(), "getRegisteredWidgets");
+        LinkedHashMap<String, Object> widgets = new LinkedHashMap<>(castMap(Reflect.getField(registered, "map")));
         List<String> removed = new ArrayList<>();
-        for (String id : new ArrayList<>(widgets.keySet())) {
-            if (ids.contains(id) || loadedBy(widgets.get(id), oldClassLoader)) {
-                widgets.remove(id);
-                removed.add(id);
+        widgets.entrySet().removeIf(e -> {
+            boolean stale = ids.contains(e.getKey()) || loadedBy(e.getValue(), oldClassLoader);
+            if (stale) {
+                removed.add(e.getKey());
             }
-        }
+            return stale;
+        });
         if (!removed.isEmpty()) {
+            Reflect.setField(registered, "map", widgets);
             log.add("widgets: removed " + removed);
         }
     }
@@ -222,15 +256,11 @@ public class ContributionInjector {
         if (widgets.isEmpty()) {
             return;
         }
-        widgetMap().putAll(instantiateValues(widgets, bundle));
-        log.add("widgets: added " + widgets.keySet());
-    }
-
-    @NotNull
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> widgetMap() {
         Object registered = Reflect.call(widgetService(), "getRegisteredWidgets");
-        return (Map<String, Object>) Reflect.getField(registered, "map");
+        LinkedHashMap<String, Object> next = new LinkedHashMap<>(castMap(Reflect.getField(registered, "map")));
+        next.putAll(instantiateValues(widgets, bundle));
+        Reflect.setField(registered, "map", next);
+        log.add("widgets: added " + widgets.keySet());
     }
 
     @NotNull
@@ -299,7 +329,8 @@ public class ContributionInjector {
             return;
         }
         Object provider = guiceInstance(UI_BUNDLE, "com.polarion.alm.portal.web.server.NavigationTopicProvider");
-        Map<String, Object> extenders = castMap(Reflect.getField(provider, "extenders"));
+        // Requests copy this map at the same time, so it is replaced by a changed copy, never changed in place.
+        Map<String, Object> extenders = new LinkedHashMap<>(castMap(Reflect.getField(provider, "extenders")));
         List<String> removed = new ArrayList<>();
         extenders.entrySet().removeIf(e -> {
             // Extenders contributed with translator="service" are HiveMind proxies of a generated class.
@@ -310,6 +341,7 @@ public class ContributionInjector {
             return stale;
         });
         if (!removed.isEmpty()) {
+            Reflect.setField(provider, "extenders", extenders);
             log.add("navigation extenders: removed " + removed);
         }
     }
@@ -319,50 +351,80 @@ public class ContributionInjector {
             return;
         }
         Object provider = guiceInstance(UI_BUNDLE, "com.polarion.alm.portal.web.server.NavigationTopicProvider");
-        Class<?> wrapperClass = Reflect.loadClass(UI_BUNDLE, "com.polarion.alm.portal.web.server.NavigationExtenderWrapper");
-        Set<Object> wrappers = new LinkedHashSet<>();
+        // Same key as NavigationTopicProvider.setExtenders, which changes the map in place.
+        Map<String, Object> extenders = new LinkedHashMap<>(castMap(Reflect.getField(provider, "extenders")));
         for (String className : classNames) {
-            Object wrapper = Reflect.newInstance(wrapperClass);
-            Reflect.call(wrapper, "setExtender", Reflect.newInstance(loadClass(bundle, className)));
-            wrappers.add(wrapper);
+            Object extender = Reflect.newInstance(loadClass(bundle, className));
+            extenders.put((String) Reflect.call(extender, "getId"), extender);
         }
-        Reflect.call(provider, "setExtenders", wrappers);
+        Reflect.setField(provider, "extenders", extenders);
         log.add("navigation extenders: added " + classNames);
     }
 
-    // --- workflow functions: ContributionsManager creates a new instance per call ---
+    // --- workflow contributions: ContributionsManager creates a new instance per call ---
 
     /**
-     * {@code getFunctions} returns a copy, so removal goes to the two internal maps of the real ContributionsManager:
-     * {@code contributions} (used to create instances) and {@code functions} (listed in the workflow editor).
+     * Remembers the holders whose class the old revision loaded: functions, conditions, validators and signature
+     * policies alike. They keep working with the old class until {@link #add} or {@link #finish} handles them.
      */
-    private void removeWorkflowFunctions(@Nullable ClassLoader oldClassLoader) {
+    void collectWorkflowHolders(@NotNull String symbolicName, @Nullable ClassLoader oldClassLoader) {
         if (oldClassLoader == null) {
             return;
         }
+        WorkflowContributions contributions = workflowContributions();
+        if (contributions == null) {
+            return;
+        }
+        Set<Object> holders = contributions.holders(c -> c.getClassLoader() == oldClassLoader);
+        if (!holders.isEmpty()) {
+            pendingWorkflowHolders.computeIfAbsent(symbolicName, k -> Collections.newSetFromMap(new IdentityHashMap<>())).addAll(holders);
+        }
+    }
+
+    /**
+     * Points the holders of the old revision to the same class in the new one. A holder whose class is gone is removed.
+     */
+    void repointWorkflowHolders(@NotNull Bundle bundle) {
+        Set<Object> holders = pendingWorkflowHolders.remove(bundle.getSymbolicName());
+        if (holders == null) {
+            return;
+        }
+        Set<Object> gone = Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<String> repointed = new LinkedHashSet<>();
+        for (Object holder : holders) {
+            String className = ((Class<?>) Reflect.call(holder, "getClazz")).getName();
+            try {
+                Reflect.call(holder, "setClazz", bundle.loadClass(className));
+                repointed.add((String) Reflect.call(holder, "getName"));
+            } catch (ClassNotFoundException e) {
+                gone.add(holder);
+            }
+        }
+        if (!repointed.isEmpty()) {
+            log.add("workflow contributions: class replaced " + repointed);
+        }
+        if (!gone.isEmpty()) {
+            WorkflowContributions contributions = workflowContributions();
+            if (contributions != null) {
+                log.add("workflow contributions: removed " + contributions.remove(gone));
+            }
+        }
+    }
+
+    /**
+     * {@code getFunctions} returns a copy, so changes go to the internal maps of the real ContributionsManager.
+     *
+     * @return {@code null} when the manager is not the expected class
+     */
+    @Nullable
+    private WorkflowContributions workflowContributions() {
         ITrackerService trackerService = PlatformContext.getPlatform().lookupService(ITrackerService.class);
         Object manager = Reflect.unwrapHiveMindProxy(trackerService.getWorkflowManager().getContributionsManager());
         if (!manager.getClass().getName().endsWith(".ContributionsManager")) {
-            log.add("WARNING workflow functions not removed: unexpected manager " + manager.getClass().getName());
-            return;
+            log.add("WARNING workflow contributions not changed: unexpected manager " + manager.getClass().getName());
+            return null;
         }
-        Set<String> removed = new LinkedHashSet<>();
-        for (String field : List.of("contributions", "functions")) {
-            Map<String, Map<String, Object>> byPrototype = castNestedMap(Reflect.getField(Reflect.getField(manager, field), "contributions"));
-            for (Map<String, Object> holders : byPrototype.values()) {
-                holders.entrySet().removeIf(e -> {
-                    Object clazz = Reflect.call(e.getValue(), "getClazz");
-                    boolean stale = clazz instanceof Class<?> c && c.getClassLoader() == oldClassLoader;
-                    if (stale) {
-                        removed.add(e.getKey());
-                    }
-                    return stale;
-                });
-            }
-        }
-        if (!removed.isEmpty()) {
-            log.add("workflow functions: removed " + removed);
-        }
+        return new WorkflowContributions(manager);
     }
 
     private void addWorkflowFunctions(@NotNull List<ExtensionDescriptor.WorkflowFunction> functions, @NotNull Bundle bundle) {
@@ -433,6 +495,17 @@ public class ContributionInjector {
     }
 
     @NotNull
+    private static Set<String> instanceKeys(@NotNull Map<String, String> values) {
+        Set<String> keys = new LinkedHashSet<>();
+        values.forEach((key, value) -> {
+            if (value.startsWith(INSTANCE_PREFIX)) {
+                keys.add(key);
+            }
+        });
+        return keys;
+    }
+
+    @NotNull
     private static Class<?> loadClass(@NotNull Bundle bundle, @NotNull String className) {
         try {
             return bundle.loadClass(className);
@@ -443,12 +516,6 @@ public class ContributionInjector {
 
     private static boolean loadedBy(@Nullable Object value, @Nullable ClassLoader classLoader) {
         return value != null && classLoader != null && value.getClass().getClassLoader() == classLoader;
-    }
-
-    @NotNull
-    @SuppressWarnings("unchecked")
-    private static Map<String, Map<String, Object>> castNestedMap(@Nullable Object map) {
-        return map != null ? (Map<String, Map<String, Object>>) map : Map.of();
     }
 
     @NotNull
