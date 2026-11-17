@@ -65,6 +65,9 @@
         <!-- SonarCloud. The parent points projectKey and organization at SBB, so both are set here. -->
         <sonar.projectKey>intechcore_com.intechcore.polarion.extension.hotreload</sonar.projectKey>
         <sonar.organization>intechcore</sonar.organization>
+        <!-- inject/** writes into live Tomcat and HiveMind singletons; only a rescan on a running Polarion tests it.
+             The parent's entry is restated because the property replaces it. -->
+        <sonar.coverage.exclusions>**/rest/controller/**,**/hotreload/inject/**</sonar.coverage.exclusions>
     </properties>
 
     <dependencies>
