@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -135,9 +136,10 @@ public class RedeployService {
         // 2. change the framework; a failure here still lets step 3 put back what resolves
         List<Bundle> installedNow = new ArrayList<>();
         Set<Bundle> toStart = new LinkedHashSet<>();
+        Set<Bundle> applied = new HashSet<>();
         Exception failure = null;
         try {
-            changeFramework(changes, installedNow, toStart, log);
+            changeFramework(changes, installedNow, toStart, applied, log);
         } catch (BundleException | RuntimeException e) {
             failure = e;
         }
@@ -169,8 +171,9 @@ public class RedeployService {
             try {
                 start(bundle, toStart.contains(bundle));
                 adminPagesChanged |= putBack(bundle, tomcat, injector, log, restartRequired);
+                // Only a bundle that runs the jar on disk now; one whose change failed must stay a change.
                 Path jar = scanner.jarOf(bundle);
-                if (jar != null && Files.isRegularFile(jar)) {
+                if (applied.contains(bundle) && jar != null && Files.isRegularFile(jar)) {
                     JarFingerprints.put(bundle, jar);
                 }
             } catch (BundleException | RuntimeException e) {
@@ -192,7 +195,7 @@ public class RedeployService {
     }
 
     private void changeFramework(@NotNull List<BundleChange> changes, @NotNull List<Bundle> installedNow,
-                                 @NotNull Set<Bundle> toStart, @NotNull List<String> log) throws BundleException {
+                                 @NotNull Set<Bundle> toStart, @NotNull Set<Bundle> applied, @NotNull List<String> log) throws BundleException {
         for (BundleChange change : changes) {
             switch (change.type()) {
                 case UNINSTALL -> {
@@ -201,6 +204,7 @@ public class RedeployService {
                 }
                 case UPDATE -> {
                     change.bundle().update();
+                    applied.add(change.bundle());
                     log.add(change.symbolicName() + ": updated in place");
                 }
                 case REPLACE -> {
@@ -208,13 +212,16 @@ public class RedeployService {
                     change.bundle().uninstall();
                     Bundle replacement = install(change.jar());
                     installedNow.add(replacement);
+                    applied.add(replacement);
                     if (wasStarted) {
                         toStart.add(replacement);
                     }
                     log.add(change.symbolicName() + ": replaced by " + change.jar().getFileName());
                 }
                 case INSTALL -> {
-                    installedNow.add(install(change.jar()));
+                    Bundle installed = install(change.jar());
+                    installedNow.add(installed);
+                    applied.add(installed);
                     log.add(change.symbolicName() + ": installed");
                 }
             }

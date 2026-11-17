@@ -92,10 +92,16 @@ public class ExtensionScanner {
      * Compares the content with the hash taken at install time. Without one, falls back to the file time, which
      * misses a copy that keeps an old time.
      */
-    private static boolean contentChanged(@NotNull Path jar, @NotNull Bundle bundle) {
+    private boolean contentChanged(@NotNull Path jar, @NotNull Bundle bundle) {
         String installed = JarFingerprints.get(bundle);
         if (installed != null) {
-            return !installed.equals(JarFingerprints.of(jar));
+            try {
+                return !installed.equals(JarFingerprints.of(jar));
+            } catch (IllegalStateException e) {
+                unreadableJars.add(jar.normalize());
+                warnings.add("cannot read " + jar.getFileName() + " (" + e.getMessage() + "), skipped");
+                return false;
+            }
         }
         return jar.toFile().lastModified() > bundle.getLastModified();
     }

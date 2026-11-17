@@ -318,6 +318,8 @@ class RedeployServiceTest {
         doAnswer(invocation -> {
             throw new BundleException("broken jar");
         }).when(failing).update();
+        bundleJars.put(failing, Files.writeString(tempDir.resolve("my.failing.jar"), "new failing"));
+        bundleJars.put(other, Files.writeString(tempDir.resolve("my.other.jar"), "new other"));
         closure = List.of(failing, other);
         changes = List.of(
                 new BundleChange(BundleChange.Type.UPDATE, "my.failing", jarPath("my.failing.jar"), failing),
@@ -333,6 +335,9 @@ class RedeployServiceTest {
                 "context /polarion/my.failing added",
                 "context /polarion/my.other added");
         verify(injectors.constructed().get(0)).finish();
+        // Neither change ran, so both stay changes for the next rescan.
+        assertThat(JarFingerprints.get(failing)).isNull();
+        assertThat(JarFingerprints.get(other)).isNull();
     }
 
     @Test
