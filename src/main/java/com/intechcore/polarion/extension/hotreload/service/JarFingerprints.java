@@ -23,13 +23,26 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class JarFingerprints {
 
     private static final int BUFFER_SIZE = 64 * 1024;
+    /** Matches no content hash, so the scanner reports the bundle as changed until a rescan finishes it. */
+    private static final String UNFINISHED = "unfinished";
     private static final Map<Long, String> FINGERPRINTS = new ConcurrentHashMap<>();
 
     private JarFingerprints() {
     }
 
     public static void put(@NotNull Bundle bundle, @NotNull Path jar) {
-        FINGERPRINTS.put(bundle.getBundleId(), of(jar));
+        put(bundle, of(jar));
+    }
+
+    public static void put(@NotNull Bundle bundle, @NotNull String fingerprint) {
+        FINGERPRINTS.put(bundle.getBundleId(), fingerprint);
+    }
+
+    /**
+     * Marks a bundle whose change a rescan started, so the next scan reports it again until one finishes it.
+     */
+    public static void markUnfinished(@NotNull Bundle bundle) {
+        put(bundle, UNFINISHED);
     }
 
     @Nullable

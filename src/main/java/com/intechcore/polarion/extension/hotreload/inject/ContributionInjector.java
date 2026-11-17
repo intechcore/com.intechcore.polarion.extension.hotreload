@@ -36,8 +36,12 @@ public class ContributionInjector {
 
     private final List<String> log;
 
-    /** Workflow holders of the old revisions, by bundle symbolic name, waiting for the class of the new revision. */
-    private final Map<String, Set<Object>> pendingWorkflowHolders = new LinkedHashMap<>();
+    /**
+     * Workflow holders of the old revisions, by bundle symbolic name, waiting for the class of the new revision. It
+     * outlives one rescan: the holders of a bundle that did not come back wait for the next one. The rescan lock of
+     * RedeployService guards it.
+     */
+    private static final Map<String, Set<Object>> PENDING_WORKFLOW_HOLDERS = new LinkedHashMap<>();
 
     public ContributionInjector(@NotNull List<String> log) {
         this.log = log;
@@ -48,7 +52,7 @@ public class ContributionInjector {
      * the class loader that loaded them, so stale objects go even when the new descriptor dropped their key.
      * <p>
      * Workflow holders stay in place: {@link #add} points them to the class of the new revision, and
-     * {@link #finish} removes those no new revision claims. Velocity and rendering context keys go only when
+     * {@link #finish} removes those of uninstalled bundles. Velocity and rendering context keys go only when
      * {@link #add} can create them again, that is for {@code instance:} values.
      */
     public void remove(@NotNull ExtensionDescriptor descriptor, @NotNull String symbolicName, @Nullable ClassLoader oldClassLoader) {
@@ -86,12 +90,20 @@ public class ContributionInjector {
     }
 
     /**
-     * Removes the workflow holders no new revision claimed: their bundle is uninstalled or did not come back.
+     * Removes the workflow holders no new revision claimed, because their bundle is uninstalled. The holders of
+     * the unfinished bundles stay: only they can bring back conditions, validators and signature policies.
+     *
+     * @param unfinished the symbolic names of the bundles that did not come back
      */
-    public void finish() {
+    public void finish(@NotNull Set<String> unfinished) {
         Set<Object> unclaimed = Collections.newSetFromMap(new IdentityHashMap<>());
-        pendingWorkflowHolders.values().forEach(unclaimed::addAll);
-        pendingWorkflowHolders.clear();
+        PENDING_WORKFLOW_HOLDERS.entrySet().removeIf(e -> {
+            if (unfinished.contains(e.getKey())) {
+                return false;
+            }
+            unclaimed.addAll(e.getValue());
+            return true;
+        });
         if (unclaimed.isEmpty()) {
             return;
         }
@@ -383,7 +395,7 @@ public class ContributionInjector {
         }
         Set<Object> holders = contributions.holders(c -> c.getClassLoader() == oldClassLoader);
         if (!holders.isEmpty()) {
-            pendingWorkflowHolders.computeIfAbsent(symbolicName, k -> Collections.newSetFromMap(new IdentityHashMap<>())).addAll(holders);
+            PENDING_WORKFLOW_HOLDERS.computeIfAbsent(symbolicName, k -> Collections.newSetFromMap(new IdentityHashMap<>())).addAll(holders);
         }
     }
 
@@ -395,7 +407,7 @@ public class ContributionInjector {
      * validators and signature policies have no descriptor here, so they keep their holder.
      */
     void repointWorkflowHolders(@NotNull Bundle bundle) {
-        Set<Object> holders = pendingWorkflowHolders.remove(bundle.getSymbolicName());
+        Set<Object> holders = PENDING_WORKFLOW_HOLDERS.remove(bundle.getSymbolicName());
         if (holders == null) {
             return;
         }

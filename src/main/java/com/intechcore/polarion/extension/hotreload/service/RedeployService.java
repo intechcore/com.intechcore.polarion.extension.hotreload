@@ -136,13 +136,15 @@ public class RedeployService {
         // 2. change the framework; a failure here still lets step 3 put back what resolves
         List<Bundle> installedNow = new ArrayList<>();
         Set<Bundle> toStart = new LinkedHashSet<>();
-        Set<Bundle> applied = new HashSet<>();
+        Map<Bundle, String> applied = new HashMap<>();
         Exception failure = null;
         try {
             changeFramework(changes, installedNow, toStart, applied, log);
         } catch (BundleException | RuntimeException e) {
             failure = e;
         }
+        // A bundle stays a change until it is put back, also when it never resolves.
+        applied.keySet().forEach(JarFingerprints::markUnfinished);
         if (!existing.isEmpty()) {
             // A timeout or an interrupt propagates: the refresh still runs, so nothing can be put back safely.
             for (String error : refresh(frameworkWiring, existing)) {
@@ -163,25 +165,28 @@ public class RedeployService {
         frameworkWiring.resolveBundles(targets);
 
         // 3. put the new revisions back
+        Set<String> unfinished = new HashSet<>();
         for (Bundle bundle : targets) {
             if (bundle.getState() == Bundle.INSTALLED) {
                 errors.add(bundle.getSymbolicName() + " does not resolve; check its Require-Bundle and Import-Package");
+                unfinished.add(bundle.getSymbolicName());
                 continue;
             }
             try {
                 start(bundle, toStart.contains(bundle));
                 adminPagesChanged |= putBack(bundle, tomcat, injector, log, restartRequired);
-                // Only a bundle that runs the jar on disk now; one whose change failed must stay a change.
-                Path jar = scanner.jarOf(bundle);
-                if (applied.contains(bundle) && jar != null && Files.isRegularFile(jar)) {
-                    JarFingerprints.put(bundle, jar);
+                // The hash of the jar the change read, not of the file now: another build can land meanwhile.
+                String fingerprint = applied.get(bundle);
+                if (fingerprint != null) {
+                    JarFingerprints.put(bundle, fingerprint);
                 }
             } catch (BundleException | RuntimeException e) {
                 logger.error("Hot redeploy of " + bundle.getSymbolicName() + " failed", e);
                 errors.add(bundle.getSymbolicName() + ": " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                unfinished.add(bundle.getSymbolicName());
             }
         }
-        injector.finish();
+        injector.finish(unfinished);
 
         if (adminPagesChanged) {
             reapplyAdminMenuOrder(tomcat, targets, log);
@@ -195,7 +200,7 @@ public class RedeployService {
     }
 
     private void changeFramework(@NotNull List<BundleChange> changes, @NotNull List<Bundle> installedNow,
-                                 @NotNull Set<Bundle> toStart, @NotNull Set<Bundle> applied, @NotNull List<String> log) throws BundleException {
+                                 @NotNull Set<Bundle> toStart, @NotNull Map<Bundle, String> applied, @NotNull List<String> log) throws BundleException {
         for (BundleChange change : changes) {
             switch (change.type()) {
                 case UNINSTALL -> {
@@ -203,28 +208,45 @@ public class RedeployService {
                     log.add(change.symbolicName() + ": uninstalled");
                 }
                 case UPDATE -> {
+                    String fingerprint = fingerprint(change.jar());
                     change.bundle().update();
-                    applied.add(change.bundle());
+                    applied.put(change.bundle(), fingerprint);
                     log.add(change.symbolicName() + ": updated in place");
                 }
                 case REPLACE -> {
                     boolean wasStarted = isStarted(change.bundle());
+                    String fingerprint = fingerprint(change.jar());
                     change.bundle().uninstall();
                     Bundle replacement = install(change.jar());
                     installedNow.add(replacement);
-                    applied.add(replacement);
+                    applied.put(replacement, fingerprint);
                     if (wasStarted) {
                         toStart.add(replacement);
                     }
                     log.add(change.symbolicName() + ": replaced by " + change.jar().getFileName());
                 }
                 case INSTALL -> {
+                    String fingerprint = fingerprint(change.jar());
                     Bundle installed = install(change.jar());
                     installedNow.add(installed);
-                    applied.add(installed);
+                    applied.put(installed, fingerprint);
                     log.add(change.symbolicName() + ": installed");
                 }
             }
+        }
+    }
+
+    /**
+     * Hashes the jar just before the framework reads it.
+     *
+     * @return {@code ""} when the jar cannot be read: it matches no content, so the bundle stays a change
+     */
+    @NotNull
+    private static String fingerprint(@NotNull Path jar) {
+        try {
+            return JarFingerprints.of(jar);
+        } catch (IllegalStateException e) {
+            return "";
         }
     }
 

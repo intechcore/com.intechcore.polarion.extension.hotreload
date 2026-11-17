@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -64,6 +65,7 @@ class WorkflowHoldersTest {
 
     @AfterEach
     void tearDown() {
+        new ContributionInjector(new ArrayList<>()).finish(Set.of());
         platformContext.close();
     }
 
@@ -78,7 +80,7 @@ class WorkflowHoldersTest {
 
         injector.collectWorkflowHolders("my.ext", OldCondition.class.getClassLoader());
         injector.repointWorkflowHolders(bundle);
-        injector.finish();
+        injector.finish(Set.of());
 
         assertThat(condition.getClazz()).isEqualTo(NewCondition.class);
         assertThat(all("contributions")).containsOnlyKeys("myCondition", "polarionFunction");
@@ -98,7 +100,7 @@ class WorkflowHoldersTest {
         ContributionInjector injector = new ContributionInjector(log);
 
         injector.collectWorkflowHolders("my.ext", OldCondition.class.getClassLoader());
-        injector.finish();
+        injector.finish(Set.of());
 
         assertThat(all("contributions")).containsOnlyKeys("polarionFunction");
         assertThat(all("conditions")).isEmpty();
@@ -112,11 +114,36 @@ class WorkflowHoldersTest {
     }
 
     @Test
+    void keepsTheHoldersOfAnUnfinishedBundleForTheNextRescan() throws Exception {
+        Bundle bundle = mock(Bundle.class);
+        when(bundle.getSymbolicName()).thenReturn("my.ext");
+        when(bundle.loadClass(OldCondition.class.getName())).thenAnswer(invocation -> NewCondition.class);
+        when(bundle.loadClass(OldValidator.class.getName())).thenAnswer(invocation -> OldValidator.class);
+
+        ContributionInjector failed = new ContributionInjector(log);
+        failed.collectWorkflowHolders("my.ext", OldCondition.class.getClassLoader());
+        failed.finish(Set.of("my.ext"));
+
+        assertThat(all("conditions")).containsEntry("myCondition", condition);
+        assertThat(all("validators")).containsOnlyKeys("myValidator");
+        assertThat(log).isEmpty();
+
+        // The next rescan has no holder of the failed revision's loader, but still gets the waiting ones.
+        ContributionInjector next = new ContributionInjector(log);
+        next.collectWorkflowHolders("my.ext", null);
+        next.repointWorkflowHolders(bundle);
+        next.finish(Set.of());
+
+        assertThat(condition.getClazz()).isEqualTo(NewCondition.class);
+        assertThat(all("validators")).containsOnlyKeys("myValidator");
+    }
+
+    @Test
     void doesNothingWithoutAnOldClassLoader() {
         ContributionInjector injector = new ContributionInjector(log);
 
         injector.collectWorkflowHolders("my.ext", null);
-        injector.finish();
+        injector.finish(Set.of());
 
         assertThat(all("functions")).containsOnlyKeys("myFunction", "polarionFunction");
         assertThat(log).isEmpty();

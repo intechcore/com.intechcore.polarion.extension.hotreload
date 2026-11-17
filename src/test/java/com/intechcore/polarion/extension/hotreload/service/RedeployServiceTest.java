@@ -31,6 +31,7 @@ import java.util.HashMap;
 import java.util.Hashtable;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
@@ -199,7 +200,7 @@ class RedeployServiceTest {
         verify(injector).remove(any(), eq("my.dependent"), any());
         verify(injector).add(any(), eq(updated));
         verify(injector).add(any(), eq(dependent));
-        verify(injector).finish();
+        verify(injector).finish(Set.of());
         assertThat(DescriptorCache.get(updated).getWebapps()).hasSize(1);
     }
 
@@ -334,7 +335,7 @@ class RedeployServiceTest {
                 "refresh finished",
                 "context /polarion/my.failing added",
                 "context /polarion/my.other added");
-        verify(injectors.constructed().get(0)).finish();
+        verify(injectors.constructed().get(0)).finish(Set.of());
         // Neither change ran, so both stay changes for the next rescan.
         assertThat(JarFingerprints.get(failing)).isNull();
         assertThat(JarFingerprints.get(other)).isNull();
@@ -349,12 +350,31 @@ class RedeployServiceTest {
             throw new BundleException("activator failed");
         }).when(broken).start(Bundle.START_ACTIVATION_POLICY);
         closure = List.of(broken, other);
-        changes = List.of(new BundleChange(BundleChange.Type.UPDATE, "my.broken", jarPath("my.broken.jar"), broken));
+        Path brokenJar = Files.writeString(tempDir.resolve("my.broken.jar"), "new broken");
+        changes = List.of(new BundleChange(BundleChange.Type.UPDATE, "my.broken", brokenJar, broken));
 
         RescanReport report = new RedeployService().rescan(true);
 
         assertThat(report.errors()).containsExactly("my.broken: BundleException: activator failed");
         assertThat(report.log()).contains("context /polarion/my.other added").doesNotContain("context /polarion/my.broken added");
+        verify(injectors.constructed().get(0)).finish(Set.of("my.broken"));
+        // Stays a change, so the next rescan tries it again.
+        assertThat(JarFingerprints.get(broken)).isNotNull().isNotEqualTo(JarFingerprints.of(brokenJar));
+    }
+
+    @Test
+    void recordsTheFingerprintOfTheJarTheUpdateRead() throws Exception {
+        Bundle updated = extension("my.ext", 10);
+        Path jar = Files.writeString(tempDir.resolve("my.ext.jar"), "applied build");
+        String applied = JarFingerprints.of(jar);
+        doAnswer(invocation -> Files.writeString(jar, "later build")).when(updated).update();
+        closure = List.of(updated);
+        changes = List.of(new BundleChange(BundleChange.Type.UPDATE, "my.ext", jar, updated));
+
+        RescanReport report = new RedeployService().rescan(true);
+
+        assertThat(report.errors()).isEmpty();
+        assertThat(JarFingerprints.get(updated)).isEqualTo(applied);
     }
 
     @Test
@@ -403,6 +423,9 @@ class RedeployServiceTest {
 
         assertThat(report.errors()).containsExactly(
                 "my.new does not resolve; check its Require-Bundle and Import-Package");
+        verify(injectors.constructed().get(0)).finish(Set.of("my.new"));
+        // Without a fingerprint the scanner would compare file times, and a jar copied before the install is not newer.
+        assertThat(JarFingerprints.get(installed)).isNotNull();
     }
 
     @Test
