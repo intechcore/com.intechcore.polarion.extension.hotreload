@@ -60,7 +60,10 @@ public class ExtensionScanner {
             if (bundle == null) {
                 changes.add(new BundleChange(BundleChange.Type.INSTALL, symbolicName, jar, null));
             } else if (!jar.equals(locationPath(bundle))) {
-                changes.add(new BundleChange(BundleChange.Type.REPLACE, symbolicName, jar, bundle));
+                // An unreadable jar of the installed bundle, for example while it is copied, does not make an older one win.
+                if (!unreadableJars.contains(locationPath(bundle))) {
+                    changes.add(new BundleChange(BundleChange.Type.REPLACE, symbolicName, jar, bundle));
+                }
             } else if (contentChanged(jar, bundle)) {
                 changes.add(new BundleChange(BundleChange.Type.UPDATE, symbolicName, jar, bundle));
             }

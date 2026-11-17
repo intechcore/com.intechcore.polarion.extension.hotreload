@@ -186,6 +186,19 @@ class ExtensionScannerTest {
     }
 
     @Test
+    void keepsABundleWhoseJarCannotBeReadOverAnOlderDuplicate() throws IOException {
+        Path plugins = Files.createDirectories(installDir.resolve("extensions/ext/eclipse/plugins"));
+        Path current = Files.writeString(plugins.resolve("ext-2.0.jar"), "half copied");
+        jar("ext", "ext-1.0.jar", "my.ext", "1.0.0");
+        bundle("my.ext", ExtensionScanner.installLocation(current), 0);
+
+        ExtensionScanner scanner = new ExtensionScanner(bundleContext);
+
+        assertThat(scanner.scan(SELF)).isEmpty();
+        assertThat(scanner.getWarnings()).singleElement().asString().startsWith("cannot read ext-2.0.jar (");
+    }
+
+    @Test
     void ignoresBundlesOutsideTheExtensionsFolder() {
         Bundle platform = bundle("com.polarion.platform", "reference:file:plugins/platform.jar", 0);
         Bundle remote = bundle("remote", "http://example.com/remote.jar", 0);
