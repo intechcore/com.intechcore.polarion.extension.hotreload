@@ -26,6 +26,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockConstruction;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -69,7 +70,19 @@ class HotReloadControllersTest {
         HotReloadInternalController controller = new HotReloadInternalController();
 
         assertThat(controller.changes()).isSameAs(DRY_RUN);
-        assertThat(controller.rescan()).isSameAs(APPLIED);
+        assertThat(controller.rescan("XMLHttpRequest")).isSameAs(APPLIED);
+    }
+
+    @Test
+    void internalRescanRejectsARequestWithoutTheRequestedWithHeader() {
+        currentUser("admin", List.of("admin"));
+        HotReloadInternalController controller = new HotReloadInternalController();
+
+        assertThatThrownBy(() -> controller.rescan(null))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessage("The request needs the header X-Requested-With: XMLHttpRequest");
+        assertThatThrownBy(() -> controller.rescan("fetch")).isInstanceOf(ForbiddenException.class);
+        verify(redeployServices.constructed().get(0), never()).rescan(true);
     }
 
     @Test
@@ -78,7 +91,7 @@ class HotReloadControllersTest {
         HotReloadInternalController controller = new HotReloadInternalController();
 
         assertThatThrownBy(controller::changes).isInstanceOf(ForbiddenException.class);
-        assertThatThrownBy(controller::rescan).isInstanceOf(ForbiddenException.class);
+        assertThatThrownBy(() -> controller.rescan("XMLHttpRequest")).isInstanceOf(ForbiddenException.class);
     }
 
     @Test

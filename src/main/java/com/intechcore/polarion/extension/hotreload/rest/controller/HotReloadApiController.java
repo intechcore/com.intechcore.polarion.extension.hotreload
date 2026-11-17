@@ -43,7 +43,7 @@ public class HotReloadApiController {
     @Produces(MediaType.APPLICATION_JSON)
     @Operation(summary = "Applies the differences between the extensions folder and the running extensions")
     public RescanReport rescan(@Context ContainerRequestContext requestContext) {
-        return asTokenUser(requestContext, internalController::rescan);
+        return asTokenUser(requestContext, internalController::applyRescan);
     }
 
     // RequestContextUtil.getUserSubject() of generic needs Spring's RequestContextListener, which this web.xml does not register.

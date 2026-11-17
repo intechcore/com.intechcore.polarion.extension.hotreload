@@ -45,6 +45,17 @@ describe('useRemote', () => {
     expect(url).toMatch(/\/polarion\/hotreload\/rest\/(internal|api)\/version$/);
   });
 
+  it('marks every request with X-Requested-With, which the server requires for a session-authenticated rescan', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<Capture />);
+    await vi.waitFor(() => expect(api).toBeTruthy());
+    await api.sendRequest({ method: 'POST', url: '/rescan', contentType: 'application/json' });
+    const headers = fetchMock.mock.calls[0][1]!.headers as Record<string, string>;
+    expect(headers['X-Requested-With']).toBe('XMLHttpRequest');
+    expect(headers['Content-Type']).toBe('application/json');
+  });
+
   it('uses the token-authenticated /api base and sends the Authorization header when a token is set', async () => {
     vi.stubEnv('VITE_BEARER_TOKEN', 'tok123');
     const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
