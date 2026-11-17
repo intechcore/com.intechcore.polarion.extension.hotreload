@@ -170,6 +170,7 @@ public class RedeployService {
             if (bundle.getState() == Bundle.INSTALLED) {
                 errors.add(bundle.getSymbolicName() + " does not resolve; check its Require-Bundle and Import-Package");
                 unfinished.add(bundle.getSymbolicName());
+                JarFingerprints.markUnfinished(bundle);
                 continue;
             }
             try {
@@ -184,6 +185,8 @@ public class RedeployService {
                 logger.error("Hot redeploy of " + bundle.getSymbolicName() + " failed", e);
                 errors.add(bundle.getSymbolicName() + ": " + e.getClass().getSimpleName() + ": " + e.getMessage());
                 unfinished.add(bundle.getSymbolicName());
+                // Also a dependent that did not change: the next scan reports it, so a rescan brings it back.
+                JarFingerprints.markUnfinished(bundle);
             }
         }
         injector.finish(unfinished);

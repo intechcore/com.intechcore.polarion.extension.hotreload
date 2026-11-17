@@ -363,6 +363,26 @@ class RedeployServiceTest {
     }
 
     @Test
+    void keepsADependentThatFailsToComeBackAsAChange() throws Exception {
+        Bundle updated = extension("my.ext", 10);
+        Bundle dependent = extension("my.dependent", 11);
+        when(dependent.getHeaders()).thenReturn(headers("Bundle-ActivationPolicy", "lazy"));
+        doAnswer(invocation -> {
+            throw new BundleException("activator failed");
+        }).when(dependent).start(Bundle.START_ACTIVATION_POLICY);
+        Path dependentJar = Files.writeString(tempDir.resolve("my.dependent.jar"), "dependent");
+        JarFingerprints.put(dependent, dependentJar);
+        closure = List.of(updated, dependent);
+        changes = List.of(new BundleChange(BundleChange.Type.UPDATE, "my.ext", jarPath("my.ext.jar"), updated));
+
+        RescanReport report = new RedeployService().rescan(true);
+
+        assertThat(report.errors()).containsExactly("my.dependent: BundleException: activator failed");
+        verify(injectors.constructed().get(0)).finish(Set.of("my.dependent"));
+        assertThat(JarFingerprints.get(dependent)).isNotEqualTo(JarFingerprints.of(dependentJar));
+    }
+
+    @Test
     void recordsTheFingerprintOfTheJarTheUpdateRead() throws Exception {
         Bundle updated = extension("my.ext", 10);
         Path jar = Files.writeString(tempDir.resolve("my.ext.jar"), "applied build");
