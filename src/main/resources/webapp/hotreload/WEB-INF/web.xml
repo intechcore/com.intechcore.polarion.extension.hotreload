@@ -15,6 +15,10 @@
         <url-pattern>/*</url-pattern>
     </filter-mapping>
 
+    <listener>
+        <listener-class>com.intechcore.polarion.extension.hotreload.DescriptorSnapshotListener</listener-class>
+    </listener>
+
     <servlet>
         <servlet-name>hotreload-rest</servlet-name>
         <servlet-class>org.glassfish.jersey.servlet.ServletContainer</servlet-class>

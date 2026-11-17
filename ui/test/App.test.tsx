@@ -48,7 +48,7 @@ describe('App router', () => {
       a.getAttribute('href'),
     );
     // The same order as the extenders in hivemodule.xml.
-    expect(links).toEqual(['?feature=about', '?feature=disclaimer']);
+    expect(links).toEqual(['?feature=rescan', '?feature=about', '?feature=disclaimer']);
   });
 
   it('pre-selects the scope from the ?scope param so feature links carry it', async () => {

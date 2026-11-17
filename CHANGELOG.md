@@ -8,3 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 - The extension skeleton: About, Disclaimer and REST API pages in the global Administration menu.
+- Rescan of the extensions folder: installs, updates, replaces and uninstalls extension bundles without a restart.
+- Refresh of web applications, administration pages, workflow functions, LiveReport widgets, Velocity contexts and navigation extenders.
+- The Rescan Extensions page in the global Administration menu.
+- The REST endpoints `GET /api/changes` and `POST /api/rescan` for global administrators with a personal access token.
