@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react';
 import About from './pages/About';
 import Disclaimer from './pages/Disclaimer';
+import Rescan from './pages/Rescan';
 
 /**
  * A single navigable page of the app. The `id` is what appears in the URL as `?feature=<id>` and is
@@ -18,6 +19,12 @@ export interface Feature {
 }
 
 export const FEATURES: Feature[] = [
+  {
+    id: 'rescan',
+    label: 'Rescan Extensions',
+    description: 'Lists and applies the changes in the extensions folder without a restart.',
+    component: Rescan,
+  },
   {
     id: 'about',
     label: 'About',

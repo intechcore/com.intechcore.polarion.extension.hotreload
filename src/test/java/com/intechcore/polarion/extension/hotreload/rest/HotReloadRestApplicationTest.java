@@ -2,6 +2,8 @@ package com.intechcore.polarion.extension.hotreload.rest;
 
 import ch.sbb.polarion.extension.generic.rest.controller.info.ExtensionInfoApiController;
 import ch.sbb.polarion.extension.generic.rest.controller.settings.NamedSettingsApiController;
+import com.intechcore.polarion.extension.hotreload.rest.controller.HotReloadApiController;
+import com.intechcore.polarion.extension.hotreload.rest.controller.HotReloadInternalController;
 import org.junit.jupiter.api.Test;
 
 import java.util.Set;
@@ -14,11 +16,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 class HotReloadRestApplicationTest {
 
     @Test
-    void servesTheGenericEndpointsWithoutSettings() {
+    void servesTheGenericAndRescanEndpointsWithoutSettings() {
         Set<Class<?>> classes = new HotReloadRestApplication().getClasses();
 
         assertThat(classes)
-                .contains(ExtensionInfoApiController.class)
+                .contains(ExtensionInfoApiController.class, HotReloadApiController.class, HotReloadInternalController.class)
                 .doesNotContain(NamedSettingsApiController.class);
     }
 }

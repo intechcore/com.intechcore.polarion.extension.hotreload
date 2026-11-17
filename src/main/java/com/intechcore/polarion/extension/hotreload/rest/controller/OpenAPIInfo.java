@@ -9,7 +9,7 @@ import io.swagger.v3.oas.annotations.info.License;
         info = @Info(
                 title = "Hot Reload REST API",
                 version = "v1",
-                description = "Version and documentation of the Hot Reload extension for Polarion ALM.",
+                description = "Lists and applies the changes in the Polarion extensions folder without a restart.",
                 contact = @Contact(name = "Intechcore GmbH", url = "https://www.intechcore.com", email = "polarion@intechcore.com"),
                 license = @License(name = "Apache License, Version 2.0", url = "https://www.apache.org/licenses/LICENSE-2.0")))
 public class OpenAPIInfo {

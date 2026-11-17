@@ -8,6 +8,7 @@ A React + Vite single-page app on [react-sbb-polarion](https://github.com/Schwei
 There is one `index.html` / bundle. The page to render is chosen from the `feature` query parameter:
 
 - `/` (no param) renders a development landing page listing every feature.
+- `/?feature=rescan` renders the Rescan Extensions page.
 - `/?feature=about` renders the About page.
 
 Features are declared in [`src/features.tsx`](src/features.tsx). Add a page component under

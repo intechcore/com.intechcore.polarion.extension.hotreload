@@ -20,11 +20,11 @@
 [![Technical Debt](https://sonarcloud.io/api/project_badges/measure?project=intechcore_com.intechcore.polarion.extension.hotreload&metric=sqale_index)](https://sonarcloud.io/summary/new_code?id=intechcore_com.intechcore.polarion.extension.hotreload)
 
 > [!IMPORTANT]
-> Read the [Disclaimer](DISCLAIMER.md) before you use this extension. Use it in production at your own risk.
+> Read the [Disclaimer](DISCLAIMER.md) before you use this extension. Use it on development servers only.
 
-This Polarion extension reloads changed resources without a server restart.
+This Polarion extension installs, updates and uninstalls other Polarion extensions without a restart of Polarion.
 
-The extension is in an early stage of development. It does not change the behavior of Polarion yet.
+Polarion 2606 reads its extensions only at startup. A new or changed extension jar becomes active only after a restart. This extension applies the changes in the extensions folder to the running server.
 
 ## Build
 
@@ -50,18 +50,85 @@ mvn clean install -P local-install-into-polarion
 
 The `POLARION_HOME` environment variable must point to the Polarion installation folder.
 
-Changes take effect only after a restart of Polarion.
+This extension takes effect only after a restart of Polarion. It cannot redeploy itself.
 
 GitHub releases carry a signed provenance bundle. Verify a downloaded jar with
 `gh attestation verify <file> --repo intechcore/com.intechcore.polarion.extension.hotreload`.
 
 ## Polarion configuration
 
-The extension adds the **Hot Reload** section to the Administration menu of the global scope. The section holds the **About**, **Disclaimer** and **REST API** pages.
+The extension adds the **Hot Reload** section to the Administration menu of the global scope. The section holds the **Rescan Extensions**, **About**, **Disclaimer** and **REST API** pages. Only global administrators can run a rescan.
+
+## Usage
+
+1. Copy, replace or delete extension jars in `<polarion_home>/polarion/extensions/<extension>/eclipse/plugins`.
+2. Open **Administration > Hot Reload > Rescan Extensions**.
+3. Click **Show changes** to see what the extension found.
+4. Click **Rescan and apply** to apply the changes.
+5. Reload the Polarion page.
+
+The extension compares the jars in the extensions folder with the running extensions:
+
+| Change | When |
+|---|---|
+| Install | A jar for an extension that does not run yet. |
+| Update | The jar of a running extension is newer than the running extension. |
+| Replace | The jar of a running extension has a new file name, for example after a version change. |
+| Uninstall | The jar of a running extension is gone. |
+
+Extensions that depend on a changed extension are refreshed too. The report lists every step.
+
+## What is refreshed
+
+| Contribution | Refreshed |
+|---|---|
+| Web applications (`com.polarion.portal.tomcat.webapps` in `plugin.xml`) | Yes |
+| Administration pages (`com.polarion.xray.webui.administrationPageExtenders`) | Yes |
+| Workflow functions (`com.polarion.alm.tracker.workflow.functions`) | Yes |
+| LiveReport page widgets (`com.polarion.alm.richpages.widgets`) | Yes |
+| Velocity context of LiveReport pages (`com.polarion.alm.richpages.velocityContext`) | Yes |
+| Velocity context of wiki pages (`com.polarion.alm.wiki.renderingContext`) | Yes |
+| Navigation extenders (`com.polarion.xray.webui.customNavigationExtenders`) | Yes |
+| HiveMind service implementations and interceptors (`<implementation>`) | No, restart required |
+| Guice modules (`Guice-Modules` manifest header) | No, restart required |
+| Other HiveMind configuration points | No, restart required |
+
+The report lists every contribution that needs a restart.
+
+When the Admin Menu Organizer extension is installed, the extension applies its menu order again.
 
 ## REST API
 
 This extension provides a REST API. Its OpenAPI specification can be obtained [here](docs/openapi.json).
+
+Scripts and build pipelines can run a rescan through it. The base URL is `<polarion_url>/polarion/hotreload/rest/api`.
+
+| Method | Path | Action |
+|---|---|---|
+| `GET` | `/changes` | Lists the changes in the extensions folder. Applies nothing. |
+| `POST` | `/rescan` | Applies the changes in the extensions folder. |
+
+Authenticate with a personal access token of a global administrator. Other users get HTTP 403.
+
+```bash
+curl -X POST -H "Authorization: Bearer <token>" http://localhost/polarion/hotreload/rest/api/rescan
+```
+
+Both endpoints return the same report as the administration page:
+
+| Field | Content |
+|---|---|
+| `applied` | `false` for `GET /changes`, `true` for `POST /rescan`. |
+| `changes` | One line for each change found: `INSTALL`, `UPDATE`, `REPLACE` or `UNINSTALL`. |
+| `log` | The steps done, in order. |
+| `restartRequired` | The contributions that only a restart applies. |
+| `errors` | The failures. If this list is not empty, restart Polarion. |
+
+A typical development cycle:
+
+1. Build the changed extension with `mvn clean install -P local-install-into-polarion`.
+2. Call `POST /rescan`.
+3. Reload the Polarion page.
 
 ## Contributing
 

@@ -8,11 +8,20 @@
 
          The REST API entry is not a page: it opens the generated Swagger UI in the REST webapp. -->
     <contribution configuration-id="com.polarion.xray.webui.administrationPageExtenders">
-        <extender id="about"
-                  name="About"
+        <extender id="rescan"
+                  name="Rescan Extensions"
                   parentNodeId="hotreload"
                   parentNodeName="Hot Reload"
                   parentNodeIconUrl="/polarion/hotreload-app/ui/images/menu/30x30/_parent.svg"
+                  iconUrl="/polarion/hotreload-app/ui/images/menu/16x16/rescan.svg"
+                  pageUrl="/polarion/hotreload-app/ui/app/index.html?feature=rescan&amp;embedded=true&amp;scope=$scope$"
+                  projectScope="false"
+                  projectGroupScope="false"
+                  repositoryScope="true"/>
+
+        <extender id="about"
+                  name="About"
+                  parentNodeId="hotreload"
                   iconUrl="/polarion/hotreload-app/ui/images/menu/16x16/about.svg"
                   pageUrl="/polarion/hotreload-app/ui/app/index.html?feature=about&amp;embedded=true&amp;scope=$scope$"
                   projectScope="false"

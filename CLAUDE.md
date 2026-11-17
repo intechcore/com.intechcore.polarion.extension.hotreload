@@ -4,13 +4,13 @@ Guidance for working in this repository.
 
 ## What this is
 
-`com.intechcore.polarion.extension.hotreload` - a Polarion ALM extension for hot reload,
-in an early stage: the repository holds the skeleton only. It builds on the SBB
+`com.intechcore.polarion.extension.hotreload` - a Polarion ALM extension that installs, updates
+and uninstalls other extensions in a running Polarion. It builds on the SBB
 `ch.sbb.polarion.extension.generic` framework (parent POM) and targets
 **Polarion 2606 / Tomcat 11 / Jakarta EE 11**.
 
-The skeleton adds the **Hot Reload** section to the global Administration menu with three pages:
-About, Disclaimer and REST API. It has no feature code and no settings yet.
+It adds the **Hot Reload** section to the global Administration menu with four pages:
+Rescan Extensions, About, Disclaimer and REST API. It has no settings yet.
 
 ## Build & verify
 
@@ -33,13 +33,16 @@ mvn clean install -P local-install-into-polarion   # deploy into $POLARION_HOME
   (`__PIXEL_REFERENCES__`). Regenerate only with `npm run test:update:docker`, never by hand.
 - **After a failed `local-install-into-polarion`, check the jar landed.** A failure empties this
   extension's own plugins directory, and Polarion then starts without the extension.
+- **This extension cannot redeploy itself.** A new build of it needs a Polarion restart.
+- **The only real check is a rescan on a running Polarion.** Touch an extension jar to make it
+  count as updated. Every rescan step is logged with the prefix `hotreload:` in the Polarion main log.
 
 UI dev loop (hot reload against a running Polarion):
 
 ```bash
 cd ui
 cp .env.local.template .env.local   # set VITE_BASE_URL and (optional) VITE_BEARER_TOKEN
-npm run dev                          # http://localhost:5173/?feature=about (or ?feature=disclaimer)
+npm run dev                          # http://localhost:5173/?feature=rescan (or about, disclaimer)
 npx tsc --noEmit                     # type-check (vite build does NOT type-check)
 ```
 
@@ -86,16 +89,26 @@ Two layers: a Java/Polarion backend and a React frontend.
 
 **Java** (`src/main/java/.../hotreload/`)
 
-- `rest/HotReloadRestApplication` - a plain `GenericRestApplication`. It registers no settings
-  and no controller of its own, so generic serves only extension info, OpenAPI and Swagger UI. Its
-  settings endpoints appear once a setting is registered with `NamedSettingsRegistry`.
+- `rest/HotReloadRestApplication` - a `GenericRestApplication` with the two rescan controllers. It
+  registers no settings, so generic serves no settings endpoints.
+- `rest/controller/HotReloadInternalController` - session-authenticated `/internal/changes` and
+  `/internal/rescan` for the Rescan page, `@Hidden`, global administrators only.
+- `rest/controller/HotReloadApiController` - the PAT-authenticated `/api` twin. It runs the internal
+  controller as the token user through `ISecurityService.doAsUser`.
 - `rest/controller/OpenAPIInfo` - the annotation the swagger plugin turns into `docs/openapi.json`.
+- `service/RedeployService` - the rescan: finds changes (`ExtensionScanner`), takes old contexts and
+  contributions out, changes and refreshes the bundles, then puts the new ones back.
+- `inject/TomcatDeployer`, `inject/ContributionInjector` - swap Tomcat contexts and HiveMind
+  contributions inside Polarion's singletons. `internal/Reflect` does every reflective call.
+- `descriptor/DescriptorParser` - reads `plugin.xml`, `hivemodule.xml` and `Guice-Modules`.
+- `DescriptorSnapshotListener` - fills `DescriptorCache` and builds lazy services at server start.
 - `HotReloadAppServlet` - a `GenericUiServlet` subclass serving the
   `hotreload-app` webapp context.
 
 **React** (`ui/`) - Vite + React 19 + TypeScript SPA on the shared
 `@sbb-polarion/react-sbb-polarion` (RSP) library. One app, page selected by `?feature=`:
 
+- `pages/Rescan.tsx` - the Rescan Extensions page: shows and applies the rescan report.
 - `pages/About.tsx` - RSP's shared `About` component, fed this extension's endpoints.
 - `pages/Disclaimer.tsx` - the build-generated DISCLAIMER article.
 - `pages/Landing.tsx` - a dev-only stub listing every feature, so the app can be exercised in
@@ -111,6 +124,30 @@ real file (`.../ui/app/index.html?...`), not at a directory - `GenericUiServlet`
 extension-less paths.
 
 ## Conventions & gotchas
+
+Rescan internals:
+
+- **No public API.** Polarion has no API for any of this. Every internal goes through
+  `internal/Reflect`, which loads classes from their owning bundle. A Polarion upgrade breaks it at
+  runtime, not at build.
+- **HiveMind proxies.** Services from `hivemodule.xml` are wrapped in up to three proxies (`_inner`,
+  `_serviceModel`, `_service`). Compare class loaders only after `Reflect.unwrapHiveMindProxy`.
+- **Lazy services.** HiveMind builds `ContributionsManager` on first use. Built after a jar was
+  deleted, it stops half way and loses Polarion's own workflow functions.
+  `ContributionInjector.buildLazyServices()` must run at server start.
+- **Deleted jar.** `Bundle.getEntry()` of a bundle whose jar is gone returns `null` without an
+  error. Uninstall reads descriptors from `DescriptorCache`, filled at server start and after each
+  rescan.
+- **Admin page keys.** `AdministrationPageExtender.getId()` and `getParentNodeId()` derive missing
+  values from the names. Build keys through these getters, never from the XML attributes.
+- **Menu registry.** admin-menu-organizer reads the menu order from the HiveMind configuration point,
+  not from the live menu. Every menu change must also update that configuration point.
+- **Refresh cascade.** `refreshBundles` also refreshes every bundle that uses `Require-Bundle` on a
+  changed one. Their contributions must be redone too.
+- **Class singletons.** All consumers reached through Guice are bound `in(Singleton.class)`, so
+  `getInstance` returns the live object. Check the binding before adding a new consumer.
+
+General:
 
 - **Jakarta, not javax.** All code is on `jakarta.*`, and the
   `polarion-compatibility-maven-plugin` fails the build when the bundle or a nested jar refers to a

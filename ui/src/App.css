@@ -99,6 +99,29 @@ code {
   font-weight: 600;
 }
 
+.rescan-note {
+  color: var(--en-muted);
+  max-width: 720px;
+  line-height: 1.5;
+}
+
+.rescan-buttons {
+  margin: 12px 0;
+}
+
+.rescan-section h3 {
+  margin: 16px 0 4px;
+}
+
+.rescan-section ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.rescan-error {
+  color: #a12020;
+}
+
 /* The About page (and its .markdown-body README article headings) is the shared
    @sbb-polarion/react-sbb-polarion component; its styles ship in the lib's bundled style.css. */
 
