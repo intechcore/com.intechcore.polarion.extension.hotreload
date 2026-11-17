@@ -54,8 +54,8 @@ public class ContributionInjector {
     public void remove(@NotNull ExtensionDescriptor descriptor, @NotNull String symbolicName, @Nullable ClassLoader oldClassLoader) {
         removeAdministrationPages(descriptor);
         removeWidgets(descriptor.getWidgets().keySet(), oldClassLoader);
-        replaceVelocityContext(instanceKeys(descriptor.getVelocityContext()), oldClassLoader, Map.of());
-        replaceRenderingContext(instanceKeys(descriptor.getRenderingContext()), oldClassLoader, Map.of());
+        replaceVelocityContext(descriptor.getVelocityContext(), oldClassLoader, Map.of());
+        replaceRenderingContext(descriptor.getRenderingContext(), oldClassLoader, Map.of());
         removeNavigationExtenders(oldClassLoader);
         collectWorkflowHolders(symbolicName, oldClassLoader);
     }
@@ -78,8 +78,8 @@ public class ContributionInjector {
     public void add(@NotNull ExtensionDescriptor descriptor, @NotNull Bundle bundle) {
         addAdministrationPages(descriptor.getAdministrationPages());
         addWidgets(descriptor.getWidgets(), bundle);
-        replaceVelocityContext(Set.of(), null, instantiateValues(descriptor.getVelocityContext(), bundle));
-        replaceRenderingContext(Set.of(), null, instantiateValues(descriptor.getRenderingContext(), bundle));
+        replaceVelocityContext(Map.of(), null, instantiateValues(descriptor.getVelocityContext(), bundle));
+        replaceRenderingContext(Map.of(), null, instantiateValues(descriptor.getRenderingContext(), bundle));
         addNavigationExtenders(descriptor.getNavigationExtenderClasses(), bundle);
         repointWorkflowHolders(bundle);
         addWorkflowFunctions(descriptor.getWorkflowFunctions(), bundle);
@@ -271,20 +271,20 @@ public class ContributionInjector {
 
     // --- velocity context of rich pages and wiki rendering context (Guice singletons) ---
 
-    private void replaceVelocityContext(@NotNull Set<String> removeKeys, @Nullable ClassLoader oldClassLoader, @NotNull Map<String, Object> add) {
+    private void replaceVelocityContext(@NotNull Map<String, String> oldValues, @Nullable ClassLoader oldClassLoader, @NotNull Map<String, Object> add) {
         Object provider = guiceInstance(UI_BUNDLE, "com.polarion.alm.shared.api.model.rp.internal.RichPageVelocityContextProviderImpl");
         Map<String, Object> current = castMap(Reflect.call(provider, "getRichPageVelocityContextMap"));
-        Map<String, Object> next = replace(current, removeKeys, oldClassLoader, add);
+        Map<String, Object> next = replace(current, oldValues, oldClassLoader, add);
         if (next != null) {
             Reflect.call(provider, "setRichPageVelocityContextMap", next);
             log.add("rich page velocity context: now " + next.keySet().size() + " entries, changed " + changedKeys(current, next));
         }
     }
 
-    private void replaceRenderingContext(@NotNull Set<String> removeKeys, @Nullable ClassLoader oldClassLoader, @NotNull Map<String, Object> add) {
+    private void replaceRenderingContext(@NotNull Map<String, String> oldValues, @Nullable ClassLoader oldClassLoader, @NotNull Map<String, Object> add) {
         Object wikiService = guiceInstance(WIKI_BUNDLE, "com.polarion.alm.wiki.internal.WikiService");
         Map<String, Object> current = castMap(Reflect.call(wikiService, "getWikiRenderingContextMap"));
-        Map<String, Object> next = replace(current, removeKeys, oldClassLoader, add);
+        Map<String, Object> next = replace(current, oldValues, oldClassLoader, add);
         if (next != null) {
             Reflect.call(wikiService, "setWikiRenderingContextMap", next);
             log.add("wiki rendering context: now " + next.keySet().size() + " entries, changed " + changedKeys(current, next));
@@ -292,13 +292,19 @@ public class ContributionInjector {
     }
 
     /**
+     * Removes the {@code instance:} keys of the old descriptor and other objects of the old class loader, then adds
+     * the new entries. Other keys of the old descriptor stay: {@link #add} cannot create them again.
+     *
+     * @param oldValues the context items of the old descriptor, key to value
      * @return the new map, or {@code null} when nothing changes
      */
     @Nullable
-    private static Map<String, Object> replace(@NotNull Map<String, Object> current, @NotNull Set<String> removeKeys,
-                                               @Nullable ClassLoader oldClassLoader, @NotNull Map<String, Object> add) {
+    static Map<String, Object> replace(@NotNull Map<String, Object> current, @NotNull Map<String, String> oldValues,
+                                       @Nullable ClassLoader oldClassLoader, @NotNull Map<String, Object> add) {
+        Set<String> removeKeys = instanceKeys(oldValues);
         Map<String, Object> next = new HashMap<>(current);
-        boolean changed = next.keySet().removeIf(k -> removeKeys.contains(k) || loadedBy(current.get(k), oldClassLoader));
+        boolean changed = next.keySet().removeIf(k -> removeKeys.contains(k)
+                || (!oldValues.containsKey(k) && loadedBy(current.get(k), oldClassLoader)));
         if (!add.isEmpty()) {
             next.putAll(add);
             changed = true;
