@@ -79,6 +79,9 @@ public class RedeployService {
             try {
                 apply(changes, scanner, log, restartRequired);
             } catch (Exception e) {
+                if (e instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
                 logger.error("Hot redeploy failed", e);
                 errors.add(e.getClass().getSimpleName() + ": " + e.getMessage());
             }
