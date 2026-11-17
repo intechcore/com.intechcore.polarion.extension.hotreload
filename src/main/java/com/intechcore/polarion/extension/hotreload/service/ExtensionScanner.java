@@ -46,6 +46,8 @@ public class ExtensionScanner {
 
     @NotNull
     public List<BundleChange> scan(@NotNull String ownSymbolicName) {
+        warnings.clear();
+        unreadableJars.clear();
         Map<String, Path> jars = extensionJars();
         Map<String, Bundle> installed = installedExtensionBundles();
         List<BundleChange> changes = new ArrayList<>();

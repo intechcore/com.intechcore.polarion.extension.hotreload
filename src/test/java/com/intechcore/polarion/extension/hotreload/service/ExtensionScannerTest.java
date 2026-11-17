@@ -178,6 +178,11 @@ class ExtensionScannerTest {
 
         assertThat(scanner.scan(SELF)).isEmpty();
         assertThat(scanner.getWarnings()).singleElement().asString().startsWith("cannot read ext-1.0.jar (");
+
+        Files.delete(jar);
+
+        assertThat(scanner.scan(SELF)).extracting(BundleChange::type).containsExactly(BundleChange.Type.UNINSTALL);
+        assertThat(scanner.getWarnings()).isEmpty();
     }
 
     @Test
