@@ -45,6 +45,13 @@ final class WorkflowContributions {
     }
 
     /**
+     * @return whether the holder is a workflow function, which the descriptor of its bundle declares in full
+     */
+    boolean isFunction(@NotNull Object holder) {
+        return byPrototype("functions").values().stream().anyMatch(holders -> holders.containsValue(holder));
+    }
+
+    /**
      * Removes the holders from every map. Workflow requests read the maps at the same time, so each map is replaced
      * by a changed copy and never changed in place.
      *

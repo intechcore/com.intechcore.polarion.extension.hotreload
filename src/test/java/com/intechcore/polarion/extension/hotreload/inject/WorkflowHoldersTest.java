@@ -37,11 +37,13 @@ class WorkflowHoldersTest {
     static class OldFunction {
     }
 
+    static class OldValidator {
+    }
+
     private final List<String> log = new ArrayList<>();
     private final ContributionsManager manager = new ContributionsManager();
     private MockedStatic<PlatformContext> platformContext;
     private ContributionHolder condition;
-    private ContributionHolder function;
     private ContributionHolder polarionFunction;
 
     @BeforeEach
@@ -54,7 +56,8 @@ class WorkflowHoldersTest {
         platformContext.when(PlatformContext::getPlatform).thenReturn(platform);
 
         condition = holder("myCondition", OldCondition.class, "conditions");
-        function = holder("myFunction", OldFunction.class, "functions");
+        holder("myFunction", OldFunction.class, "functions");
+        holder("myValidator", OldValidator.class, "validators");
         // A class of the JDK has no class loader of its own, like Polarion's classes have another one than the extension.
         polarionFunction = holder("polarionFunction", String.class, "functions");
     }
@@ -71,7 +74,7 @@ class WorkflowHoldersTest {
         Bundle bundle = mock(Bundle.class);
         when(bundle.getSymbolicName()).thenReturn("my.ext");
         when(bundle.loadClass(OldCondition.class.getName())).thenAnswer(invocation -> NewCondition.class);
-        when(bundle.loadClass(OldFunction.class.getName())).thenThrow(new ClassNotFoundException("gone"));
+        when(bundle.loadClass(OldValidator.class.getName())).thenThrow(new ClassNotFoundException("gone"));
 
         injector.collectWorkflowHolders("my.ext", OldCondition.class.getClassLoader());
         injector.repointWorkflowHolders(bundle);
@@ -80,12 +83,13 @@ class WorkflowHoldersTest {
         assertThat(condition.getClazz()).isEqualTo(NewCondition.class);
         assertThat(all("contributions")).containsOnlyKeys("myCondition", "polarionFunction");
         assertThat(all("conditions")).containsEntry("myCondition", condition);
+        assertThat(all("validators")).isEmpty();
+        // Removed although its class exists: addWorkflowFunctions creates it again from the new descriptor.
         assertThat(all("functions")).containsOnlyKeys("polarionFunction");
         assertThat(polarionFunction.getClazz()).isEqualTo(String.class);
         assertThat(flatten(conditionsBefore)).containsEntry("myCondition", condition);
-        assertThat(log).containsExactly(
-                "workflow contributions: class replaced [myCondition]",
-                "workflow contributions: removed [myFunction]");
+        assertThat(log).hasSize(2).first().isEqualTo("workflow contributions: class replaced [myCondition]");
+        assertThat(log.get(1)).startsWith("workflow contributions: removed [").contains("myFunction", "myValidator");
     }
 
     @Test
@@ -98,6 +102,7 @@ class WorkflowHoldersTest {
 
         assertThat(all("contributions")).containsOnlyKeys("polarionFunction");
         assertThat(all("conditions")).isEmpty();
+        assertThat(all("validators")).isEmpty();
         assertThat(all("functions")).containsOnlyKeys("polarionFunction");
         // Replaced, not changed in place: a request that holds the old map keeps a consistent view.
         assertThat(flatten(functionsBefore)).containsOnlyKeys("myFunction", "polarionFunction");

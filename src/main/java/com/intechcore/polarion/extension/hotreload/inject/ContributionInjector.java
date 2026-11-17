@@ -383,15 +383,27 @@ public class ContributionInjector {
 
     /**
      * Points the holders of the old revision to the same class in the new one. A holder whose class is gone is removed.
+     * <p>
+     * Workflow functions are removed too: the descriptor declares them in full, so {@link #addWorkflowFunctions}
+     * creates them again with the new parameters, and a function the new revision dropped stays gone. Conditions,
+     * validators and signature policies have no descriptor here, so they keep their holder.
      */
     void repointWorkflowHolders(@NotNull Bundle bundle) {
         Set<Object> holders = pendingWorkflowHolders.remove(bundle.getSymbolicName());
         if (holders == null) {
             return;
         }
+        WorkflowContributions contributions = workflowContributions();
+        if (contributions == null) {
+            return;
+        }
         Set<Object> gone = Collections.newSetFromMap(new IdentityHashMap<>());
         Set<String> repointed = new LinkedHashSet<>();
         for (Object holder : holders) {
+            if (contributions.isFunction(holder)) {
+                gone.add(holder);
+                continue;
+            }
             String className = ((Class<?>) Reflect.call(holder, "getClazz")).getName();
             try {
                 Reflect.call(holder, "setClazz", bundle.loadClass(className));
@@ -404,10 +416,7 @@ public class ContributionInjector {
             log.add("workflow contributions: class replaced " + repointed);
         }
         if (!gone.isEmpty()) {
-            WorkflowContributions contributions = workflowContributions();
-            if (contributions != null) {
-                log.add("workflow contributions: removed " + contributions.remove(gone));
-            }
+            log.add("workflow contributions: removed " + contributions.remove(gone));
         }
     }
 
