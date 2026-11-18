@@ -1,5 +1,6 @@
 package com.intechcore.polarion.extension.hotreload.inject;
 
+import com.intechcore.polarion.extension.hotreload.descriptor.ExtensionDescriptor;
 import com.polarion.platform.jobs.IJobDescriptor;
 import com.polarion.platform.jobs.IJobUnit;
 import com.polarion.platform.jobs.IJobUnitFactory;
@@ -7,9 +8,7 @@ import com.polarion.platform.jobs.internal.service.JobUnitRepository;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -39,37 +38,82 @@ class JobUnitFactoriesTest {
 
     private final JobUnitRepository repository = new JobUnitRepository();
     private final List<String> log = new ArrayList<>();
+    private final JobUnitFactories factories = new JobUnitFactories(() -> repository, log);
+    private final IJobUnitFactory polarion = mock(IJobUnitFactory.class);
 
     @Test
-    void replacesTheFactoriesOfTheOldRevision() {
-        IJobUnitFactory old = mock(IJobUnitFactory.class);
-        IJobUnitFactory polarion = mock(IJobUnitFactory.class);
-        repository.registerJobUnitFactory("my.job", old);
+    void replacesTheFactoriesAndRemovesTheDroppedOnes() {
+        IJobUnitFactory old = register("my.job");
+        register("my.dropped.job");
         repository.registerJobUnitFactory("jobs.cleanup", polarion);
-        JobUnitFactories factories = new JobUnitFactories(repository, log);
 
-        factories.remove(Set.of("my.job", "my.never.registered"));
+        factories.collect("my.ext", descriptor("my.job", "my.dropped.job"));
+        // The old factories work until the new revision is in.
+        assertThat(repository.getJobUnitFactory("my.job")).isSameAs(old);
 
-        assertThat(repository.getAvailableFactoryNames()).containsExactly("jobs.cleanup");
+        factories.replace("my.ext", descriptor("my.job"), className -> new NewFactory());
+        factories.finish(Set.of());
 
-        Map<String, String> added = new LinkedHashMap<>();
-        added.put("my.job", NewFactory.class.getName());
-        factories.add(added, className -> new NewFactory());
-
+        assertThat(repository.getAvailableFactoryNames()).containsExactlyInAnyOrder("my.job", "jobs.cleanup");
         assertThat(repository.getJobUnitFactory("my.job")).isInstanceOf(NewFactory.class);
         assertThat(repository.getJobUnitFactory("jobs.cleanup")).isSameAs(polarion);
-        assertThat(log).containsExactly("job unit factories: removed [my.job]", "job unit factories: added [my.job]");
+        assertThat(log).containsExactly("job unit factories: added [my.job]", "job unit factories: removed [my.dropped.job]");
     }
 
     @Test
-    void doesNothingWithoutFactories() {
-        JobUnitFactories factories = new JobUnitFactories(repository, log);
+    void keepsTheOldFactoryWhenTheNewOneNeedsARestart() {
+        IJobUnitFactory old = register("my.job");
+        ExtensionDescriptor configured = new ExtensionDescriptor();
+        configured.getJobsNeedingRestart().add("my.job");
 
-        factories.remove(Set.of());
-        factories.add(Map.of(), className -> {
-            throw new AssertionError("not called");
+        factories.collect("my.ext", descriptor("my.job"));
+        factories.replace("my.ext", configured, className -> {
+            throw new AssertionError("not built");
         });
+        factories.finish(Set.of());
+
+        assertThat(repository.getJobUnitFactory("my.job")).isSameAs(old);
+        assertThat(log).isEmpty();
+    }
+
+    @Test
+    void removesTheFactoriesOfAnUninstalledBundleAndKeepsThoseOfAnUnfinishedOne() {
+        register("my.gone.job");
+        IJobUnitFactory failed = register("my.failed.job");
+
+        factories.collect("my.gone", descriptor("my.gone.job"));
+        factories.collect("my.failed", descriptor("my.failed.job"));
+        factories.finish(Set.of("my.failed"));
+
+        assertThat(repository.getAvailableFactoryNames()).containsExactly("my.failed.job");
+        assertThat(repository.getJobUnitFactory("my.failed.job")).isSameAs(failed);
+        assertThat(log).containsExactly("job unit factories: removed [my.gone.job]");
+    }
+
+    @Test
+    void doesNotTouchTheRepositoryWithoutJobs() {
+        JobUnitFactories noRepository = new JobUnitFactories(() -> {
+            throw new AssertionError("not looked up");
+        }, log);
+
+        noRepository.collect("my.ext", new ExtensionDescriptor());
+        noRepository.replace("my.ext", new ExtensionDescriptor(), className -> null);
+        noRepository.finish(Set.of());
 
         assertThat(log).isEmpty();
+    }
+
+    private IJobUnitFactory register(String name) {
+        IJobUnitFactory factory = mock(IJobUnitFactory.class);
+        repository.registerJobUnitFactory(name, factory);
+        return factory;
+    }
+
+    private static ExtensionDescriptor descriptor(String... jobs) {
+        ExtensionDescriptor descriptor = new ExtensionDescriptor();
+        for (String job : jobs) {
+            descriptor.getJobUnitFactories().put(job, NewFactory.class.getName());
+        }
+        return descriptor;
     }
 }

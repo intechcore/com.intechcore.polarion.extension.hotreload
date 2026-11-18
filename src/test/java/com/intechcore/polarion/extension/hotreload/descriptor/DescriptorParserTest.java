@@ -172,6 +172,7 @@ class DescriptorParserTest {
         ExtensionDescriptor descriptor = DescriptorParser.parse(null, xml(hivemodule), null);
 
         assertThat(descriptor.getJobUnitFactories()).containsExactly(Map.entry("plain.job", "my.PlainFactory"));
+        assertThat(descriptor.getJobsNeedingRestart()).containsExactly("configured.job", "initialized.job", "guice.job");
         assertThat(descriptor.getRestartRequiredReasons()).hasSize(4)
                 .anyMatch(r -> r.contains("job 'configured.job'"))
                 .anyMatch(r -> r.contains("job 'initialized.job'"))

@@ -141,6 +141,7 @@ public final class DescriptorParser {
             String serviceId = factory.getAttribute("factory");
             String className = plainServiceClasses.get(serviceId);
             if (className == null) {
+                descriptor.getJobsNeedingRestart().add(name);
                 descriptor.getRestartRequiredReasons().add(point + " job '" + name + "' (" + serviceId
                         + "): only a factory service of this module built by a plain <construct class> is reloaded");
             } else {

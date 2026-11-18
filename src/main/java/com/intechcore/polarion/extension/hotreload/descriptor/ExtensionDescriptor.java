@@ -4,8 +4,10 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * What one extension bundle contributes through {@code plugin.xml} and {@code META-INF/hivemodule.xml}.
@@ -38,6 +40,7 @@ public class ExtensionDescriptor {
     private final Map<String, String> renderingContext = new LinkedHashMap<>();
     private final List<String> navigationExtenderClasses = new ArrayList<>();
     private final Map<String, String> jobUnitFactories = new LinkedHashMap<>();
+    private final Set<String> jobsNeedingRestart = new LinkedHashSet<>();
     private final List<String> restartRequiredReasons = new ArrayList<>();
     private final List<String> warnings = new ArrayList<>();
 
@@ -74,6 +77,13 @@ public class ExtensionDescriptor {
      */
     public Map<String, String> getJobUnitFactories() {
         return jobUnitFactories;
+    }
+
+    /**
+     * @return the job names whose factory a rescan cannot build
+     */
+    public Set<String> getJobsNeedingRestart() {
+        return jobsNeedingRestart;
     }
 
     public List<String> getRestartRequiredReasons() {

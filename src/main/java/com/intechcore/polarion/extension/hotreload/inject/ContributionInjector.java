@@ -6,6 +6,7 @@ import com.polarion.alm.tracker.ITrackerService;
 import com.polarion.alm.tracker.workflow.config.IContribution;
 import com.polarion.alm.tracker.workflow.IContributionsManager;
 import com.polarion.platform.core.PlatformContext;
+import com.polarion.platform.jobs.IJobService;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.osgi.framework.Bundle;
@@ -35,9 +36,12 @@ public class ContributionInjector {
     private static final String INSTANCE_PREFIX = "instance:";
 
     private final List<String> log;
+    private final JobUnitFactories jobUnitFactories;
 
     public ContributionInjector(@NotNull List<String> log) {
         this.log = log;
+        this.jobUnitFactories = new JobUnitFactories(
+                () -> PlatformContext.getPlatform().lookupService(IJobService.class).getJobUnitRepository(), log);
     }
 
     /**
@@ -54,9 +58,7 @@ public class ContributionInjector {
         replaceVelocityContext(descriptor.getVelocityContext(), oldClassLoader, Map.of());
         replaceRenderingContext(descriptor.getRenderingContext(), oldClassLoader, Map.of());
         removeNavigationExtenders(oldClassLoader);
-        if (!descriptor.getJobUnitFactories().isEmpty()) {
-            JobUnitFactories.lookup(log).remove(descriptor.getJobUnitFactories().keySet());
-        }
+        jobUnitFactories.collect(symbolicName, descriptor);
         collectWorkflowHolders(symbolicName, oldClassLoader);
     }
 
@@ -81,9 +83,7 @@ public class ContributionInjector {
         replaceVelocityContext(Map.of(), null, instantiateValues(descriptor.getVelocityContext(), bundle));
         replaceRenderingContext(Map.of(), null, instantiateValues(descriptor.getRenderingContext(), bundle));
         addNavigationExtenders(descriptor.getNavigationExtenderClasses(), bundle);
-        if (!descriptor.getJobUnitFactories().isEmpty()) {
-            JobUnitFactories.lookup(log).add(descriptor.getJobUnitFactories(), className -> Reflect.newInstance(loadClass(bundle, className)));
-        }
+        jobUnitFactories.replace(bundle.getSymbolicName(), descriptor, className -> Reflect.newInstance(loadClass(bundle, className)));
         repointWorkflowHolders(bundle);
         addWorkflowFunctions(descriptor.getWorkflowFunctions(), bundle);
     }
@@ -95,6 +95,7 @@ public class ContributionInjector {
      * @param unfinished the symbolic names of the bundles that did not come back
      */
     public void finish(@NotNull Set<String> unfinished) {
+        jobUnitFactories.finish(unfinished);
         Set<Object> unclaimed = PendingWorkflowHolders.takeAllExcept(unfinished);
         if (unclaimed.isEmpty()) {
             return;
