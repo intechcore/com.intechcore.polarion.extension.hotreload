@@ -37,8 +37,8 @@ mvn clean install -P local-install-into-polarion   # deploy into $POLARION_HOME
   lists the new jar under "Restart required".
 - **The only real check is a rescan on a running Polarion.** `touch` does not make a jar count as
   updated: the scanner compares SHA-256 hashes of the content. Change the content, for example add a
-  line to a file in the jar. Every rescan step is logged with the prefix `hotreload:` in the Polarion
-  main log.
+  line to a file in the jar. An applied rescan also writes its report steps to the Polarion main log,
+  with the prefix `hotreload:`. A dry run writes only to the report.
 
 UI dev loop (hot reload against a running Polarion):
 
@@ -101,8 +101,9 @@ Two layers: a Java/Polarion backend and a React frontend.
   controller as the token user through `ISecurityService.doAsUser`.
 - `rest/controller/OpenAPIInfo` - the annotation the swagger plugin turns into `docs/openapi.json`.
 - `service/RedeployService` - the rescan: finds changes (`ExtensionScanner`), takes old contexts and
-  contributions out, changes and refreshes the bundles, then puts the new ones back. After a failure it
-  still puts back every bundle that resolves. A bundle that did not come back stays a change.
+  contributions out, changes and refreshes the bundles, then puts the new ones back. After a failed bundle
+  change it still refreshes and puts back every bundle that resolves. A bundle that did not come back
+  stays a change. A refresh timeout or an interrupt stops the rescan before the put-back: then restart.
 - `service/ExtensionScanner` - compares the jars with the bundles: `INSTALL`, `UPDATE`, `REPLACE`,
   `UNINSTALL`. The higher `Bundle-Version` wins between two jars of one name. An unreadable jar is
   skipped and never uninstalls or replaces its bundle.

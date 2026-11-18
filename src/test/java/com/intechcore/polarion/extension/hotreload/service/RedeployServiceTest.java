@@ -548,6 +548,7 @@ class RedeployServiceTest {
         Bundle gone = extension("my.gone", 12);
         states.put(gone, Bundle.UNINSTALLED);
         bundleJars.put(extension, Files.writeString(tempDir.resolve("my.ext.jar"), "content"));
+        bundleJars.put(broken, Files.writeString(tempDir.resolve("my.broken.jar"), "broken"));
 
         try (MockedStatic<ContributionInjector> lazy = mockStatic(ContributionInjector.class)) {
             lazy.when(ContributionInjector::buildLazyServices).thenThrow(new IllegalStateException("no tracker"));
@@ -558,6 +559,8 @@ class RedeployServiceTest {
         assertThat(DescriptorCache.get(extension)).isNotNull();
         assertThat(JarFingerprints.get(extension)).isNotNull();
         assertThat(DescriptorCache.get(broken)).isNull();
+        // The hash still detects a later build of a jar whose descriptors cannot be read.
+        assertThat(JarFingerprints.get(broken)).isNotNull();
         assertThat(DescriptorCache.get(gone)).isNull();
         assertThat(DescriptorCache.get(self)).isNull();
     }

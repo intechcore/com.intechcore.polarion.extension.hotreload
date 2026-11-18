@@ -62,7 +62,9 @@ public class ExtensionScanner {
             Bundle bundle = installed.get(symbolicName);
             if (symbolicName.equals(ownSymbolicName)) {
                 // This extension cannot replace itself while it runs.
-                ownJarChanged = bundle != null && (!jar.equals(locationPath(bundle)) || contentChanged(jar, bundle));
+                ownJarChanged = bundle != null && (jar.equals(locationPath(bundle))
+                        ? contentChanged(jar, bundle)
+                        : !unreadableJars.contains(locationPath(bundle)));
                 return;
             }
             if (bundle == null) {
@@ -133,7 +135,7 @@ public class ExtensionScanner {
             try {
                 return !installed.equals(JarFingerprints.of(jar));
             } catch (IllegalStateException e) {
-                unreadableJars.add(jar.normalize());
+                // Not an unreadable jar: its manifest gave the symbolic name, so nothing else is in doubt.
                 warnings.add("cannot read " + jar.getFileName() + " (" + e.getMessage() + "), skipped");
                 return false;
             }
