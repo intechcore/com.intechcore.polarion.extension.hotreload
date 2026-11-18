@@ -38,6 +38,7 @@ public class ExtensionScanner {
     private final List<String> warnings = new ArrayList<>();
     private final Set<Path> unreadableJars = new HashSet<>();
     private final Set<String> symbolicNames = new HashSet<>();
+    private boolean ownJarChanged;
 
     public ExtensionScanner(@NotNull BundleContext bundleContext) {
         this.bundleContext = bundleContext;
@@ -51,16 +52,19 @@ public class ExtensionScanner {
         unreadableJars.clear();
         Map<String, Path> jars = extensionJars();
         Map<String, Bundle> installed = installedExtensionBundles();
+        ownJarChanged = false;
         symbolicNames.clear();
         symbolicNames.addAll(jars.keySet());
         symbolicNames.addAll(installed.keySet());
         List<BundleChange> changes = new ArrayList<>();
 
         jars.forEach((symbolicName, jar) -> {
+            Bundle bundle = installed.get(symbolicName);
             if (symbolicName.equals(ownSymbolicName)) {
+                // This extension cannot replace itself while it runs.
+                ownJarChanged = bundle != null && (!jar.equals(locationPath(bundle)) || contentChanged(jar, bundle));
                 return;
             }
-            Bundle bundle = installed.get(symbolicName);
             if (bundle == null) {
                 changes.add(new BundleChange(BundleChange.Type.INSTALL, symbolicName, jar, null));
             } else if (!jar.equals(locationPath(bundle))) {
@@ -87,6 +91,13 @@ public class ExtensionScanner {
     @NotNull
     public List<String> getWarnings() {
         return warnings;
+    }
+
+    /**
+     * @return whether the last scan found another jar of this extension than the running one
+     */
+    public boolean isOwnJarChanged() {
+        return ownJarChanged;
     }
 
     /**

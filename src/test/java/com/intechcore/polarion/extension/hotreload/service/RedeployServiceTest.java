@@ -83,6 +83,7 @@ class RedeployServiceTest {
     private final List<String> scannerWarnings = new ArrayList<>();
     private final Set<String> scannedNames = new HashSet<>();
     private boolean unreadableJars;
+    private boolean ownJarChanged;
     private final Map<Bundle, Path> bundleJars = new HashMap<>();
     private boolean tomcatAccepts = true;
 
@@ -128,6 +129,7 @@ class RedeployServiceTest {
             when(scanner.getWarnings()).thenAnswer(invocation -> scannerWarnings);
             when(scanner.getSymbolicNames()).thenAnswer(invocation -> scannedNames);
             when(scanner.hasUnreadableJars()).thenAnswer(invocation -> unreadableJars);
+            when(scanner.isOwnJarChanged()).thenAnswer(invocation -> ownJarChanged);
             when(scanner.jarOf(any())).thenAnswer(invocation -> bundleJars.get(invocation.<Bundle>getArgument(0)));
             when(scanner.isExtensionBundle(any())).thenAnswer(invocation -> {
                 Bundle bundle = invocation.getArgument(0);
@@ -484,6 +486,17 @@ class RedeployServiceTest {
         assertThat(report.errors()).isEmpty();
         verify(startedReplacement).start(Bundle.START_ACTIVATION_POLICY);
         verify(resolvedReplacement, never()).start(anyInt());
+    }
+
+    @Test
+    void asksForARestartForANewJarOfItself() {
+        ownJarChanged = true;
+
+        RescanReport report = new RedeployService().rescan(false);
+
+        assertThat(report.restartRequired())
+                .containsExactly("my.self: this extension cannot reload itself, restart Polarion to use its new jar");
+        assertThat(report.log()).containsExactly("nothing changed");
     }
 
     @Test

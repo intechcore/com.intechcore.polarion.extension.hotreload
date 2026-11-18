@@ -165,7 +165,26 @@ class ExtensionScannerTest {
         Files.createDirectories(installDir.resolve("extensions/no-plugins"));
         bundle(SELF, "reference:file:extensions/self/eclipse/plugins/old-self.jar", 0);
 
-        assertThat(new ExtensionScanner(bundleContext).scan(SELF)).isEmpty();
+        ExtensionScanner scanner = new ExtensionScanner(bundleContext);
+
+        assertThat(scanner.scan(SELF)).isEmpty();
+        assertThat(scanner.isOwnJarChanged()).isTrue();
+    }
+
+    @Test
+    void reportsANewJarOfItselfOnlyWhenItsContentChanged() throws IOException {
+        Path jar = jar("self", "self.jar", SELF, false);
+        Bundle self = bundle(SELF, ExtensionScanner.installLocation(jar), 0);
+        JarFingerprints.put(self, jar);
+        ExtensionScanner scanner = new ExtensionScanner(bundleContext);
+
+        assertThat(scanner.scan(SELF)).isEmpty();
+        assertThat(scanner.isOwnJarChanged()).isFalse();
+
+        jar("self", "self.jar", SELF, "2.0.0");
+
+        assertThat(scanner.scan(SELF)).isEmpty();
+        assertThat(scanner.isOwnJarChanged()).isTrue();
     }
 
     @Test
