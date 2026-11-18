@@ -197,6 +197,7 @@ class ExtensionScannerTest {
         assertThat(scanner.scan(SELF)).isEmpty();
         assertThat(scanner.getWarnings()).singleElement().asString().startsWith("cannot read ext-2.0.jar (");
         assertThat(scanner.getSymbolicNames()).containsExactly("my.ext");
+        assertThat(scanner.hasUnreadableJars()).isTrue();
     }
 
     @Test

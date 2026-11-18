@@ -76,8 +76,12 @@ public class RedeployService {
             ExtensionScanner scanner = new ExtensionScanner(bundleContext);
             List<BundleChange> changes = scanner.scan(self.getSymbolicName());
             // Holders of a failed install whose jar is gone too: no jar and no bundle carry the name any more.
+            // An unreadable jar can carry any name, so nothing counts as gone while one exists.
             Set<String> orphaned = PendingWorkflowHolders.symbolicNames();
             orphaned.removeAll(scanner.getSymbolicNames());
+            if (scanner.hasUnreadableJars()) {
+                orphaned.clear();
+            }
             List<String> changeLines = new ArrayList<>(changes.stream().map(BundleChange::toString).toList());
             orphaned.forEach(name -> changeLines.add("CLEANUP " + name + " (workflow contributions of a failed install)"));
             scanner.getWarnings().forEach(w -> log.add("WARNING " + w));
@@ -94,8 +98,7 @@ public class RedeployService {
                     kept.removeAll(orphaned);
                     new ContributionInjector(log).finish(kept);
                 } else {
-                    // finish() at the end removes the orphaned holders too: they are never unfinished.
-                    apply(changes, scanner, log, restartRequired, errors);
+                    apply(changes, scanner, log, restartRequired, errors, orphaned);
                 }
             } catch (Exception e) {
                 if (e instanceof InterruptedException) {
@@ -110,7 +113,8 @@ public class RedeployService {
     }
 
     private void apply(@NotNull List<BundleChange> changes, @NotNull ExtensionScanner scanner, @NotNull List<String> log,
-                       @NotNull List<String> restartRequired, @NotNull List<String> errors) throws BundleException, InterruptedException {
+                       @NotNull List<String> restartRequired, @NotNull List<String> errors,
+                       @NotNull Set<String> orphaned) throws BundleException, InterruptedException {
         FrameworkWiring frameworkWiring = bundleContext.getBundle(0).adapt(FrameworkWiring.class);
 
         List<Bundle> existing = changes.stream().map(BundleChange::bundle).filter(Objects::nonNull).toList();
@@ -206,6 +210,12 @@ public class RedeployService {
         targets.forEach(bundle -> running.add(bundle.getSymbolicName()));
         changes.stream().filter(c -> c.jar() != null && !running.contains(c.symbolicName()))
                 .forEach(c -> unfinished.add(c.symbolicName()));
+        // Holders of other names wait too, unless the scan found them orphaned: their bundle is not in this rescan.
+        Set<String> changed = new HashSet<>(running);
+        changes.forEach(c -> changed.add(c.symbolicName()));
+        PendingWorkflowHolders.symbolicNames().stream()
+                .filter(name -> !changed.contains(name) && !orphaned.contains(name))
+                .forEach(unfinished::add);
         injector.finish(unfinished);
 
         if (adminPagesChanged) {

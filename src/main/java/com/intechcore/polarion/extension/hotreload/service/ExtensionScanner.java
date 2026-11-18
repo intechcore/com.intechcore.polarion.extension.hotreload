@@ -90,6 +90,13 @@ public class ExtensionScanner {
     }
 
     /**
+     * @return whether the last scan met a jar it could not read, whose symbolic name it therefore does not know
+     */
+    public boolean hasUnreadableJars() {
+        return !unreadableJars.isEmpty();
+    }
+
+    /**
      * @return the symbolic names of the jars and installed extension bundles the last scan found
      */
     @NotNull

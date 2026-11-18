@@ -82,6 +82,7 @@ class RedeployServiceTest {
     private final List<FrameworkListener> frameworkListeners = new ArrayList<>();
     private final List<String> scannerWarnings = new ArrayList<>();
     private final Set<String> scannedNames = new HashSet<>();
+    private boolean unreadableJars;
     private final Map<Bundle, Path> bundleJars = new HashMap<>();
     private boolean tomcatAccepts = true;
 
@@ -126,6 +127,7 @@ class RedeployServiceTest {
             when(scanner.scan("my.self")).thenAnswer(invocation -> changes);
             when(scanner.getWarnings()).thenAnswer(invocation -> scannerWarnings);
             when(scanner.getSymbolicNames()).thenAnswer(invocation -> scannedNames);
+            when(scanner.hasUnreadableJars()).thenAnswer(invocation -> unreadableJars);
             when(scanner.jarOf(any())).thenAnswer(invocation -> bundleJars.get(invocation.<Bundle>getArgument(0)));
             when(scanner.isExtensionBundle(any())).thenAnswer(invocation -> {
                 Bundle bundle = invocation.getArgument(0);
@@ -418,6 +420,30 @@ class RedeployServiceTest {
         assertThat(report.applied()).isTrue();
         assertThat(report.errors()).isEmpty();
         verify(injectors.constructed().get(0)).finish(Set.of("my.waiting"));
+    }
+
+    @Test
+    void keepsTheWorkflowHoldersWhileAJarCannotBeRead() {
+        PendingWorkflowHolders.add("my.copying", Set.of(new Object()));
+        unreadableJars = true;
+
+        RescanReport report = new RedeployService().rescan(true);
+
+        assertThat(report.changes()).isEmpty();
+        assertThat(PendingWorkflowHolders.symbolicNames()).containsExactly("my.copying");
+    }
+
+    @Test
+    void keepsTheWorkflowHoldersOfAnotherBundleThroughARescan() throws Exception {
+        PendingWorkflowHolders.add("my.copying", Set.of(new Object()));
+        unreadableJars = true;
+        Bundle updated = extension("my.ext", 10);
+        closure = List.of(updated);
+        changes = List.of(new BundleChange(BundleChange.Type.UPDATE, "my.ext", jarPath("my.ext.jar"), updated));
+
+        new RedeployService().rescan(true);
+
+        verify(injectors.constructed().get(0)).finish(Set.of("my.copying"));
     }
 
     @Test
