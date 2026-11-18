@@ -33,6 +33,8 @@ public final class DescriptorParser {
             ExtensionDescriptor.WIKI_RENDERING_CONTEXT,
             ExtensionDescriptor.CUSTOM_NAVIGATION_EXTENDERS);
 
+    private static final String INSTANCE_PREFIX = "instance:";
+
     private DescriptorParser() {
     }
 
@@ -97,9 +99,9 @@ public final class DescriptorParser {
                 case ExtensionDescriptor.RICH_PAGE_WIDGETS -> children(contribution, "widget")
                         .forEach(e -> descriptor.getWidgets().put(e.getAttribute("id"), e.getAttribute("instance")));
                 case ExtensionDescriptor.RICH_PAGE_VELOCITY_CONTEXT -> children(contribution, "item")
-                        .forEach(e -> descriptor.getVelocityContext().put(e.getAttribute("key"), e.getAttribute("value")));
+                        .forEach(e -> contextItem(e, point, descriptor.getVelocityContext(), descriptor));
                 case ExtensionDescriptor.WIKI_RENDERING_CONTEXT -> children(contribution, "item")
-                        .forEach(e -> descriptor.getRenderingContext().put(e.getAttribute("key"), e.getAttribute("value")));
+                        .forEach(e -> contextItem(e, point, descriptor.getRenderingContext(), descriptor));
                 case ExtensionDescriptor.CUSTOM_NAVIGATION_EXTENDERS -> children(contribution, "extenders")
                         .forEach(e -> {
                             String serviceId = e.getAttribute("extender");
@@ -112,6 +114,20 @@ public final class DescriptorParser {
                         });
                 default -> throw new IllegalStateException(point);
             }
+        }
+    }
+
+    /**
+     * Only an {@code instance:} value can be created again from the new revision. Any other value keeps the object
+     * built at startup.
+     */
+    private static void contextItem(@NotNull Element item, @NotNull String point, @NotNull Map<String, String> context,
+                                    @NotNull ExtensionDescriptor descriptor) {
+        String key = item.getAttribute("key");
+        String value = item.getAttribute("value");
+        context.put(key, value);
+        if (!value.startsWith(INSTANCE_PREFIX)) {
+            descriptor.getRestartRequiredReasons().add(point + " item '" + key + "' (" + value + "): only instance: values are reloaded");
         }
     }
 

@@ -4,6 +4,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.osgi.framework.Bundle;
 import org.osgi.framework.BundleContext;
+import org.osgi.framework.Version;
 
 import java.io.File;
 import java.io.IOException;
@@ -13,9 +14,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.jar.JarFile;
 import java.util.jar.Manifest;
 import java.util.stream.Stream;
@@ -32,6 +35,9 @@ public class ExtensionScanner {
     private final BundleContext bundleContext;
     private final Path installDir;
     private final Path extensionsDir;
+    private final List<String> warnings = new ArrayList<>();
+    private final Set<Path> unreadableJars = new HashSet<>();
+    private final Set<String> symbolicNames = new HashSet<>();
 
     public ExtensionScanner(@NotNull BundleContext bundleContext) {
         this.bundleContext = bundleContext;
@@ -41,8 +47,13 @@ public class ExtensionScanner {
 
     @NotNull
     public List<BundleChange> scan(@NotNull String ownSymbolicName) {
+        warnings.clear();
+        unreadableJars.clear();
         Map<String, Path> jars = extensionJars();
         Map<String, Bundle> installed = installedExtensionBundles();
+        symbolicNames.clear();
+        symbolicNames.addAll(jars.keySet());
+        symbolicNames.addAll(installed.keySet());
         List<BundleChange> changes = new ArrayList<>();
 
         jars.forEach((symbolicName, jar) -> {
@@ -53,17 +64,70 @@ public class ExtensionScanner {
             if (bundle == null) {
                 changes.add(new BundleChange(BundleChange.Type.INSTALL, symbolicName, jar, null));
             } else if (!jar.equals(locationPath(bundle))) {
-                changes.add(new BundleChange(BundleChange.Type.REPLACE, symbolicName, jar, bundle));
-            } else if (jar.toFile().lastModified() > bundle.getLastModified()) {
+                // An unreadable jar of the installed bundle, for example while it is copied, does not make an older one win.
+                if (!unreadableJars.contains(locationPath(bundle))) {
+                    changes.add(new BundleChange(BundleChange.Type.REPLACE, symbolicName, jar, bundle));
+                }
+            } else if (contentChanged(jar, bundle)) {
                 changes.add(new BundleChange(BundleChange.Type.UPDATE, symbolicName, jar, bundle));
             }
         });
         installed.forEach((symbolicName, bundle) -> {
-            if (!jars.containsKey(symbolicName) && !symbolicName.equals(ownSymbolicName)) {
+            // A jar that cannot be read now, for example while it is copied, is not a deleted jar.
+            if (!jars.containsKey(symbolicName) && !symbolicName.equals(ownSymbolicName) && !unreadableJars.contains(locationPath(bundle))) {
                 changes.add(new BundleChange(BundleChange.Type.UNINSTALL, symbolicName, null, bundle));
             }
         });
         return changes;
+    }
+
+    /**
+     * @return what the last scan found suspicious, such as two jars with one symbolic name
+     */
+    @NotNull
+    public List<String> getWarnings() {
+        return warnings;
+    }
+
+    /**
+     * @return whether the last scan met a jar it could not read, whose symbolic name it therefore does not know
+     */
+    public boolean hasUnreadableJars() {
+        return !unreadableJars.isEmpty();
+    }
+
+    /**
+     * @return the symbolic names of the jars and installed extension bundles the last scan found
+     */
+    @NotNull
+    public Set<String> getSymbolicNames() {
+        return symbolicNames;
+    }
+
+    /**
+     * @return the jar the bundle was installed from, or {@code null} when it is not a file
+     */
+    @Nullable
+    public Path jarOf(@NotNull Bundle bundle) {
+        return locationPath(bundle);
+    }
+
+    /**
+     * Compares the content with the hash taken at install time. Without one, falls back to the file time, which
+     * misses a copy that keeps an old time.
+     */
+    private boolean contentChanged(@NotNull Path jar, @NotNull Bundle bundle) {
+        String installed = JarFingerprints.get(bundle);
+        if (installed != null) {
+            try {
+                return !installed.equals(JarFingerprints.of(jar));
+            } catch (IllegalStateException e) {
+                unreadableJars.add(jar.normalize());
+                warnings.add("cannot read " + jar.getFileName() + " (" + e.getMessage() + "), skipped");
+                return false;
+            }
+        }
+        return jar.toFile().lastModified() > bundle.getLastModified();
     }
 
     public boolean isExtensionBundle(@NotNull Bundle bundle) {
@@ -76,9 +140,13 @@ public class ExtensionScanner {
         return REFERENCE_PREFIX + jar.toUri();
     }
 
+    /**
+     * When two jars carry one symbolic name, the higher Bundle-Version wins, whatever the file names are.
+     */
     @NotNull
     private Map<String, Path> extensionJars() {
         Map<String, Path> result = new LinkedHashMap<>();
+        Map<String, Version> versions = new HashMap<>();
         if (!Files.isDirectory(extensionsDir)) {
             return result;
         }
@@ -90,9 +158,21 @@ public class ExtensionScanner {
                 }
                 try (Stream<Path> files = Files.list(plugins)) {
                     for (Path jar : files.filter(p -> p.getFileName().toString().endsWith(".jar")).sorted().toList()) {
-                        String symbolicName = symbolicName(jar);
-                        if (symbolicName != null) {
+                        Manifest manifest = bundleManifest(jar);
+                        if (manifest == null) {
+                            continue;
+                        }
+                        String symbolicName = manifest.getMainAttributes().getValue("Bundle-SymbolicName").split(";")[0].trim();
+                        Version version = version(manifest);
+                        Path known = result.get(symbolicName);
+                        if (known == null || version.compareTo(versions.get(symbolicName)) > 0) {
+                            if (known != null) {
+                                warnings.add(duplicate(symbolicName, known, jar, jar));
+                            }
                             result.put(symbolicName, jar.normalize());
+                            versions.put(symbolicName, version);
+                        } else {
+                            warnings.add(duplicate(symbolicName, known, jar, known));
                         }
                     }
                 }
@@ -135,17 +215,37 @@ public class ExtensionScanner {
         }
     }
 
+    @NotNull
+    private static String duplicate(@NotNull String symbolicName, @NotNull Path first, @NotNull Path second, @NotNull Path used) {
+        return "two jars for " + symbolicName + ": " + first.getFileName() + " and " + second.getFileName()
+                + ", using " + used.getFileName() + "; remove the other one";
+    }
+
+    /**
+     * @return the manifest of a bundle jar, or {@code null} for a source bundle, a plain jar or an unreadable file
+     */
     @Nullable
-    private static String symbolicName(@NotNull Path jar) {
+    private Manifest bundleManifest(@NotNull Path jar) {
         try (JarFile jarFile = new JarFile(jar.toFile())) {
             Manifest manifest = jarFile.getManifest();
-            if (manifest == null || manifest.getMainAttributes().getValue("Eclipse-SourceBundle") != null) {
+            if (manifest == null || manifest.getMainAttributes().getValue("Eclipse-SourceBundle") != null
+                    || manifest.getMainAttributes().getValue("Bundle-SymbolicName") == null) {
                 return null;
             }
-            String name = manifest.getMainAttributes().getValue("Bundle-SymbolicName");
-            return name == null ? null : name.split(";")[0].trim();
+            return manifest;
         } catch (IOException e) {
+            unreadableJars.add(jar.normalize());
+            warnings.add("cannot read " + jar.getFileName() + " (" + e.getMessage() + "), skipped");
             return null;
+        }
+    }
+
+    @NotNull
+    private static Version version(@NotNull Manifest manifest) {
+        try {
+            return Version.parseVersion(manifest.getMainAttributes().getValue("Bundle-Version"));
+        } catch (IllegalArgumentException e) {
+            return Version.emptyVersion;
         }
     }
 

@@ -30,7 +30,8 @@ export default function useRemote() {
 
   const authHeaders = useCallback(
     (extra?: Record<string, string>): Record<string, string> => {
-      const headers: Record<string, string> = { ...extra };
+      // The server refuses a session-authenticated rescan without it, see HotReloadInternalController.
+      const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest', ...extra };
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }

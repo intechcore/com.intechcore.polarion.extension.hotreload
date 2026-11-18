@@ -3,6 +3,7 @@ package com.intechcore.polarion.extension.hotreload.service;
 import com.intechcore.polarion.extension.hotreload.descriptor.DescriptorParser;
 import com.intechcore.polarion.extension.hotreload.descriptor.ExtensionDescriptor;
 import com.intechcore.polarion.extension.hotreload.inject.ContributionInjector;
+import com.intechcore.polarion.extension.hotreload.inject.PendingWorkflowHolders;
 import com.intechcore.polarion.extension.hotreload.inject.TomcatDeployer;
 import com.polarion.core.util.logging.Logger;
 import org.jetbrains.annotations.NotNull;
@@ -11,6 +12,7 @@ import org.osgi.framework.Bundle;
 import org.osgi.framework.BundleContext;
 import org.osgi.framework.BundleException;
 import org.osgi.framework.FrameworkEvent;
+import org.osgi.framework.FrameworkListener;
 import org.osgi.framework.FrameworkUtil;
 import org.osgi.framework.startlevel.BundleStartLevel;
 import org.osgi.framework.wiring.BundleWiring;
@@ -19,10 +21,13 @@ import org.osgi.framework.wiring.FrameworkWiring;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -41,6 +46,8 @@ import java.util.jar.JarFile;
  *     <li>Install, update or uninstall, then refresh the dependency closure.</li>
  *     <li>Put the contexts and contributions back from the new bundle revisions.</li>
  * </ol>
+ * Step 4 runs also after a failure in step 3, for every bundle that resolves, so a failed rescan leaves as much
+ * running as it can.
  */
 public class RedeployService {
 
@@ -68,16 +75,31 @@ public class RedeployService {
             List<String> errors = new ArrayList<>();
             ExtensionScanner scanner = new ExtensionScanner(bundleContext);
             List<BundleChange> changes = scanner.scan(self.getSymbolicName());
-            List<String> changeLines = changes.stream().map(BundleChange::toString).toList();
+            // Holders of a failed install whose jar is gone too: no jar and no bundle carry the name any more.
+            // An unreadable jar can carry any name, so nothing counts as gone while one exists.
+            Set<String> orphaned = PendingWorkflowHolders.symbolicNames();
+            orphaned.removeAll(scanner.getSymbolicNames());
+            if (scanner.hasUnreadableJars()) {
+                orphaned.clear();
+            }
+            List<String> changeLines = new ArrayList<>(changes.stream().map(BundleChange::toString).toList());
+            orphaned.forEach(name -> changeLines.add("CLEANUP " + name + " (workflow contributions of a failed install)"));
+            scanner.getWarnings().forEach(w -> log.add("WARNING " + w));
 
-            if (!apply || changes.isEmpty()) {
-                if (changes.isEmpty()) {
+            if (!apply || changeLines.isEmpty()) {
+                if (changeLines.isEmpty()) {
                     log.add("nothing changed");
                 }
                 return new RescanReport(false, changeLines, log, restartRequired, errors);
             }
             try {
-                apply(changes, scanner, log, restartRequired);
+                if (changes.isEmpty()) {
+                    Set<String> kept = PendingWorkflowHolders.symbolicNames();
+                    kept.removeAll(orphaned);
+                    new ContributionInjector(log).finish(kept);
+                } else {
+                    apply(changes, scanner, log, restartRequired, errors, orphaned);
+                }
             } catch (Exception e) {
                 if (e instanceof InterruptedException) {
                     Thread.currentThread().interrupt();
@@ -90,8 +112,9 @@ public class RedeployService {
         }
     }
 
-    private void apply(@NotNull List<BundleChange> changes, @NotNull ExtensionScanner scanner,
-                       @NotNull List<String> log, @NotNull List<String> restartRequired) throws BundleException, InterruptedException {
+    private void apply(@NotNull List<BundleChange> changes, @NotNull ExtensionScanner scanner, @NotNull List<String> log,
+                       @NotNull List<String> restartRequired, @NotNull List<String> errors,
+                       @NotNull Set<String> orphaned) throws BundleException, InterruptedException {
         FrameworkWiring frameworkWiring = bundleContext.getBundle(0).adapt(FrameworkWiring.class);
 
         List<Bundle> existing = changes.stream().map(BundleChange::bundle).filter(Objects::nonNull).toList();
@@ -121,36 +144,28 @@ public class RedeployService {
                     log.add("context /" + webapp.name() + " removed");
                 }
             }
-            injector.remove(old, classLoader(bundle));
+            injector.remove(old, bundle.getSymbolicName(), classLoader(bundle));
             DescriptorCache.remove(bundle);
             adminPagesChanged |= !old.getAdministrationPages().isEmpty();
         }
 
-        // 2. change the framework
+        // 2. change the framework; a failure here still lets step 3 put back what resolves
         List<Bundle> installedNow = new ArrayList<>();
-        for (BundleChange change : changes) {
-            switch (change.type()) {
-                case UNINSTALL -> {
-                    change.bundle().uninstall();
-                    log.add(change.symbolicName() + ": uninstalled");
-                }
-                case UPDATE -> {
-                    change.bundle().update();
-                    log.add(change.symbolicName() + ": updated in place");
-                }
-                case REPLACE -> {
-                    change.bundle().uninstall();
-                    installedNow.add(install(change.jar()));
-                    log.add(change.symbolicName() + ": replaced by " + change.jar().getFileName());
-                }
-                case INSTALL -> {
-                    installedNow.add(install(change.jar()));
-                    log.add(change.symbolicName() + ": installed");
-                }
-            }
+        Set<Bundle> toStart = new LinkedHashSet<>();
+        Map<Bundle, String> applied = new HashMap<>();
+        Exception failure = null;
+        try {
+            changeFramework(changes, installedNow, toStart, applied, log);
+        } catch (BundleException | RuntimeException e) {
+            failure = e;
         }
+        // A bundle stays a change until it is put back, also when it never resolves.
+        applied.keySet().forEach(JarFingerprints::markUnfinished);
         if (!existing.isEmpty()) {
-            refresh(frameworkWiring, existing);
+            // A timeout or an interrupt propagates: the refresh still runs, so nothing can be put back safely.
+            for (String error : refresh(frameworkWiring, existing)) {
+                errors.add("refresh: " + error);
+            }
             log.add("refresh finished");
         }
 
@@ -158,37 +173,131 @@ public class RedeployService {
         for (Bundle bundle : closure) {
             if (bundle.getState() != Bundle.UNINSTALLED) {
                 targets.add(bundle);
+            } else {
+                JarFingerprints.remove(bundle);
             }
         }
         targets.addAll(installedNow);
         frameworkWiring.resolveBundles(targets);
-        for (Bundle bundle : targets) {
-            if (bundle.getState() == Bundle.INSTALLED) {
-                throw new IllegalStateException(bundle.getSymbolicName() + " does not resolve; check its Require-Bundle and Import-Package");
-            }
-            startLazily(bundle);
-        }
 
         // 3. put the new revisions back
+        Set<String> unfinished = new HashSet<>();
         for (Bundle bundle : targets) {
-            ExtensionDescriptor descriptor = descriptor(bundle);
-            DescriptorCache.put(bundle, descriptor);
-            descriptor.getRestartRequiredReasons().forEach(r -> restartRequired.add(bundle.getSymbolicName() + ": " + r));
-            descriptor.getWarnings().forEach(w -> log.add("WARNING " + bundle.getSymbolicName() + ": " + w));
-            for (ExtensionDescriptor.Webapp webapp : descriptor.getWebapps()) {
-                if (webapp.hasErrorReporter()) {
-                    log.add("WARNING context /" + webapp.name() + ": errorReporter is not re-registered");
-                }
-                boolean added = tomcat.add(webapp, bundle.getSymbolicName());
-                log.add("context /" + webapp.name() + (added ? " added" : " NOT added, see the Polarion log"));
+            if (bundle.getState() == Bundle.INSTALLED) {
+                errors.add(bundle.getSymbolicName() + " does not resolve; check its Require-Bundle and Import-Package");
+                unfinished.add(bundle.getSymbolicName());
+                JarFingerprints.markUnfinished(bundle);
+                continue;
             }
-            injector.add(descriptor, bundle);
-            adminPagesChanged |= !descriptor.getAdministrationPages().isEmpty();
+            try {
+                start(bundle, toStart.contains(bundle));
+                adminPagesChanged |= putBack(bundle, tomcat, injector, log, restartRequired);
+                // The hash of the jar the change read, not of the file now: another build can land meanwhile.
+                String fingerprint = applied.get(bundle);
+                if (fingerprint != null) {
+                    JarFingerprints.put(bundle, fingerprint);
+                }
+            } catch (BundleException | RuntimeException e) {
+                logger.error("Hot redeploy of " + bundle.getSymbolicName() + " failed", e);
+                errors.add(bundle.getSymbolicName() + ": " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                unfinished.add(bundle.getSymbolicName());
+                // Also a dependent that did not change: the next scan reports it, so a rescan brings it back.
+                JarFingerprints.markUnfinished(bundle);
+            }
         }
+        // A jar that got no running bundle, such as a replacement whose install failed, comes back as an install.
+        Set<String> running = new HashSet<>();
+        targets.forEach(bundle -> running.add(bundle.getSymbolicName()));
+        changes.stream().filter(c -> c.jar() != null && !running.contains(c.symbolicName()))
+                .forEach(c -> unfinished.add(c.symbolicName()));
+        // Holders of other names wait too, unless the scan found them orphaned: their bundle is not in this rescan.
+        Set<String> changed = new HashSet<>(running);
+        changes.forEach(c -> changed.add(c.symbolicName()));
+        PendingWorkflowHolders.symbolicNames().stream()
+                .filter(name -> !changed.contains(name) && !orphaned.contains(name))
+                .forEach(unfinished::add);
+        injector.finish(unfinished);
 
         if (adminPagesChanged) {
             reapplyAdminMenuOrder(tomcat, targets, log);
         }
+        if (failure instanceof BundleException bundleException) {
+            throw bundleException;
+        }
+        if (failure instanceof RuntimeException runtimeException) {
+            throw runtimeException;
+        }
+    }
+
+    private void changeFramework(@NotNull List<BundleChange> changes, @NotNull List<Bundle> installedNow,
+                                 @NotNull Set<Bundle> toStart, @NotNull Map<Bundle, String> applied, @NotNull List<String> log) throws BundleException {
+        for (BundleChange change : changes) {
+            switch (change.type()) {
+                case UNINSTALL -> {
+                    change.bundle().uninstall();
+                    log.add(change.symbolicName() + ": uninstalled");
+                }
+                case UPDATE -> {
+                    String fingerprint = fingerprint(change.jar());
+                    change.bundle().update();
+                    applied.put(change.bundle(), fingerprint);
+                    log.add(change.symbolicName() + ": updated in place");
+                }
+                case REPLACE -> {
+                    boolean wasStarted = isStarted(change.bundle());
+                    String fingerprint = fingerprint(change.jar());
+                    change.bundle().uninstall();
+                    Bundle replacement = install(change.jar());
+                    installedNow.add(replacement);
+                    applied.put(replacement, fingerprint);
+                    if (wasStarted) {
+                        toStart.add(replacement);
+                    }
+                    log.add(change.symbolicName() + ": replaced by " + change.jar().getFileName());
+                }
+                case INSTALL -> {
+                    String fingerprint = fingerprint(change.jar());
+                    Bundle installed = install(change.jar());
+                    installedNow.add(installed);
+                    applied.put(installed, fingerprint);
+                    log.add(change.symbolicName() + ": installed");
+                }
+            }
+        }
+    }
+
+    /**
+     * Hashes the jar just before the framework reads it.
+     *
+     * @return {@code ""} when the jar cannot be read: it matches no content, so the bundle stays a change
+     */
+    @NotNull
+    private static String fingerprint(@NotNull Path jar) {
+        try {
+            return JarFingerprints.of(jar);
+        } catch (IllegalStateException e) {
+            return "";
+        }
+    }
+
+    /**
+     * @return whether the bundle contributes administration pages
+     */
+    private static boolean putBack(@NotNull Bundle bundle, @NotNull TomcatDeployer tomcat, @NotNull ContributionInjector injector,
+                                   @NotNull List<String> log, @NotNull List<String> restartRequired) {
+        ExtensionDescriptor descriptor = descriptor(bundle);
+        DescriptorCache.put(bundle, descriptor);
+        descriptor.getRestartRequiredReasons().forEach(r -> restartRequired.add(bundle.getSymbolicName() + ": " + r));
+        descriptor.getWarnings().forEach(w -> log.add("WARNING " + bundle.getSymbolicName() + ": " + w));
+        for (ExtensionDescriptor.Webapp webapp : descriptor.getWebapps()) {
+            if (webapp.hasErrorReporter()) {
+                log.add("WARNING context /" + webapp.name() + ": errorReporter is not re-registered");
+            }
+            boolean added = tomcat.add(webapp, bundle.getSymbolicName());
+            log.add("context /" + webapp.name() + (added ? " added" : " NOT added, see the Polarion log"));
+        }
+        injector.add(descriptor, bundle);
+        return !descriptor.getAdministrationPages().isEmpty();
     }
 
     @NotNull
@@ -198,30 +307,57 @@ public class RedeployService {
         return bundle;
     }
 
-    private void refresh(@NotNull FrameworkWiring frameworkWiring, @NotNull Collection<Bundle> bundles) throws InterruptedException {
+    /**
+     * Waits for the refresh. The listener given to {@code refreshBundles} gets {@code PACKAGES_REFRESHED} only, so
+     * the errors of the refresh, such as an activator that fails on restart, come from a framework listener.
+     *
+     * @return the errors published during the refresh
+     */
+    @NotNull
+    private List<String> refresh(@NotNull FrameworkWiring frameworkWiring, @NotNull Collection<Bundle> bundles) throws InterruptedException {
         CountDownLatch done = new CountDownLatch(1);
-        List<Throwable> failures = new ArrayList<>();
-        frameworkWiring.refreshBundles(bundles, event -> {
-            if (event.getType() == FrameworkEvent.ERROR && event.getThrowable() != null) {
-                failures.add(event.getThrowable());
+        List<String> failures = Collections.synchronizedList(new ArrayList<>());
+        FrameworkListener errorListener = event -> {
+            if (event.getType() == FrameworkEvent.ERROR) {
+                Throwable error = event.getThrowable();
+                String source = event.getBundle() != null ? event.getBundle().getSymbolicName() + ": " : "";
+                failures.add(source + (error != null ? error.getClass().getSimpleName() + ": " + error.getMessage() : "error"));
             }
-            if (event.getType() == FrameworkEvent.PACKAGES_REFRESHED || event.getType() == FrameworkEvent.ERROR) {
-                done.countDown();
+        };
+        bundleContext.addFrameworkListener(errorListener);
+        try {
+            frameworkWiring.refreshBundles(bundles, event -> {
+                if (event.getType() == FrameworkEvent.PACKAGES_REFRESHED) {
+                    done.countDown();
+                }
+            });
+            if (!done.await(REFRESH_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Bundle refresh did not finish in " + REFRESH_TIMEOUT_SECONDS + " s");
             }
-        });
-        if (!done.await(REFRESH_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            throw new IllegalStateException("Bundle refresh did not finish in " + REFRESH_TIMEOUT_SECONDS + " s");
+        } finally {
+            bundleContext.removeFrameworkListener(errorListener);
         }
-        if (!failures.isEmpty()) {
-            throw new IllegalStateException("Bundle refresh failed: " + failures.get(0).getMessage(), failures.get(0));
+        synchronized (failures) {
+            return new ArrayList<>(failures);
         }
     }
 
-    private static void startLazily(@NotNull Bundle bundle) throws BundleException {
+    /**
+     * Starts a lazy bundle the way the startup does, and a replacement whose predecessor was started. Polarion
+     * installs extension bundles without a start flag, so a new eager bundle stays resolved, as after a restart.
+     */
+    private static void start(@NotNull Bundle bundle, boolean predecessorStarted) throws BundleException {
+        if (bundle.getState() != Bundle.RESOLVED) {
+            return;
+        }
         String policy = bundle.getHeaders().get("Bundle-ActivationPolicy");
-        if (bundle.getState() == Bundle.RESOLVED && policy != null && policy.startsWith("lazy")) {
+        if (predecessorStarted || (policy != null && policy.startsWith("lazy"))) {
             bundle.start(Bundle.START_ACTIVATION_POLICY);
         }
+    }
+
+    private static boolean isStarted(@NotNull Bundle bundle) {
+        return bundle.getState() == Bundle.ACTIVE || bundle.getState() == Bundle.STARTING;
     }
 
     /**
@@ -254,6 +390,10 @@ public class RedeployService {
             if (bundle.getState() != Bundle.UNINSTALLED && !bundle.equals(self) && scanner.isExtensionBundle(bundle)) {
                 try {
                     DescriptorCache.put(bundle, descriptor(bundle));
+                    Path jar = scanner.jarOf(bundle);
+                    if (jar != null && Files.isRegularFile(jar)) {
+                        JarFingerprints.put(bundle, jar);
+                    }
                 } catch (RuntimeException e) {
                     logger.warn("hotreload: cannot read descriptors of " + bundle.getSymbolicName(), e);
                 }

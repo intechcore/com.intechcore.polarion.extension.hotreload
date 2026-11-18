@@ -116,6 +116,28 @@ class DescriptorParserTest {
     }
 
     @Test
+    void reportsContextValuesThatOnlyARestartCreates() {
+        String hivemodule = """
+                <module id="my.module" version="1.0.0">
+                    <contribution configuration-id="com.polarion.alm.richpages.velocityContext">
+                        <item key="kept" value="service:my.Service"/>
+                        <item key="reloaded" value="instance:my.Tool"/>
+                    </contribution>
+                    <contribution configuration-id="com.polarion.alm.wiki.renderingContext">
+                        <item key="wiki" value="bean:my.Bean"/>
+                    </contribution>
+                </module>
+                """;
+
+        ExtensionDescriptor descriptor = DescriptorParser.parse(null, xml(hivemodule), null);
+
+        assertThat(descriptor.getVelocityContext()).containsOnlyKeys("kept", "reloaded");
+        assertThat(descriptor.getRestartRequiredReasons()).containsExactly(
+                "com.polarion.alm.richpages.velocityContext item 'kept' (service:my.Service): only instance: values are reloaded",
+                "com.polarion.alm.wiki.renderingContext item 'wiki' (bean:my.Bean): only instance: values are reloaded");
+    }
+
+    @Test
     void ignoresABlankGuiceModulesHeader() {
         assertThat(DescriptorParser.parse(null, null, "  ").getRestartRequiredReasons()).isEmpty();
     }
