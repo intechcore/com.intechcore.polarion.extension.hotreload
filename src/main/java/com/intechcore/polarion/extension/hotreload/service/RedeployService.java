@@ -189,6 +189,11 @@ public class RedeployService {
                 JarFingerprints.markUnfinished(bundle);
             }
         }
+        // A jar that got no running bundle, such as a replacement whose install failed, comes back as an install.
+        Set<String> running = new HashSet<>();
+        targets.forEach(bundle -> running.add(bundle.getSymbolicName()));
+        changes.stream().filter(c -> c.jar() != null && !running.contains(c.symbolicName()))
+                .forEach(c -> unfinished.add(c.symbolicName()));
         injector.finish(unfinished);
 
         if (adminPagesChanged) {

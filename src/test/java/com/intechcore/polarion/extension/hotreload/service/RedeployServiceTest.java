@@ -383,6 +383,21 @@ class RedeployServiceTest {
     }
 
     @Test
+    void keepsTheWorkflowHoldersWhenAReplacementFailsToInstall() throws Exception {
+        Path replacementJar = jarPath("my.replaced-2.0.jar");
+        Bundle replaced = extension("my.replaced", 10);
+        doAnswer(invocation -> states.put(replaced, Bundle.UNINSTALLED)).when(replaced).uninstall();
+        when(context.installBundle(ExtensionScanner.installLocation(replacementJar))).thenThrow(new BundleException("broken jar"));
+        closure = List.of(replaced);
+        changes = List.of(new BundleChange(BundleChange.Type.REPLACE, "my.replaced", replacementJar, replaced));
+
+        RescanReport report = new RedeployService().rescan(true);
+
+        assertThat(report.errors()).containsExactly("BundleException: broken jar");
+        verify(injectors.constructed().get(0)).finish(Set.of("my.replaced"));
+    }
+
+    @Test
     void recordsTheFingerprintOfTheJarTheUpdateRead() throws Exception {
         Bundle updated = extension("my.ext", 10);
         Path jar = Files.writeString(tempDir.resolve("my.ext.jar"), "applied build");
