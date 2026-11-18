@@ -415,7 +415,7 @@ class RedeployServiceTest {
 
         RescanReport dryRun = new RedeployService().rescan(false);
 
-        assertThat(dryRun.changes()).containsExactly("CLEANUP my.gone (workflow contributions of a failed install)");
+        assertThat(dryRun.changes()).containsExactly("CLEANUP my.gone (workflow contributions or job factories of a failed install)");
         assertThat(injectors.constructed()).isEmpty();
 
         RescanReport report = new RedeployService().rescan(true);

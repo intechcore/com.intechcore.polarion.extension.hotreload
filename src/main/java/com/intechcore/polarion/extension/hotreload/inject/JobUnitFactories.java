@@ -26,8 +26,12 @@ final class JobUnitFactories {
 
     private final Supplier<IJobUnitRepository> repository;
     private final List<String> log;
-    /** The job names of the old revisions, by bundle symbolic name. */
-    private final Map<String, Set<String>> oldNames = new LinkedHashMap<>();
+    /**
+     * The job names of the old revisions, by bundle symbolic name. It outlives one rescan: the factories of a
+     * bundle that did not come back stay registered, and the next rescan must still know them. The rescan lock of
+     * RedeployService guards it.
+     */
+    private static final Map<String, Set<String>> OLD_NAMES = new LinkedHashMap<>();
 
     JobUnitFactories(@NotNull Supplier<IJobUnitRepository> repository, @NotNull List<String> log) {
         this.repository = repository;
@@ -37,7 +41,7 @@ final class JobUnitFactories {
     void collect(@NotNull String symbolicName, @NotNull ExtensionDescriptor old) {
         Set<String> names = allNames(old);
         if (!names.isEmpty()) {
-            oldNames.computeIfAbsent(symbolicName, k -> new LinkedHashSet<>()).addAll(names);
+            OLD_NAMES.computeIfAbsent(symbolicName, k -> new LinkedHashSet<>()).addAll(names);
         }
     }
 
@@ -52,24 +56,38 @@ final class JobUnitFactories {
             factories.forEach((name, className) -> repository.get().registerJobUnitFactory(name, (IJobUnitFactory) newInstance.apply(className)));
             log.add("job unit factories: added " + factories.keySet());
         }
-        Set<String> dropped = new LinkedHashSet<>(oldNames.getOrDefault(symbolicName, Set.of()));
-        oldNames.remove(symbolicName);
+        Set<String> dropped = new LinkedHashSet<>(OLD_NAMES.getOrDefault(symbolicName, Set.of()));
+        OLD_NAMES.remove(symbolicName);
         dropped.removeAll(allNames(descriptor));
         unregister(dropped);
     }
 
     /**
-     * Removes the factories of the bundles that are gone; those of the unfinished bundles stay.
+     * Removes the factories of the bundles that are gone. Those of the unfinished bundles stay, and so do their
+     * names, for the next rescan.
      */
     void finish(@NotNull Set<String> unfinished) {
         Set<String> gone = new LinkedHashSet<>();
-        oldNames.forEach((symbolicName, names) -> {
-            if (!unfinished.contains(symbolicName)) {
-                gone.addAll(names);
+        OLD_NAMES.entrySet().removeIf(e -> {
+            if (unfinished.contains(e.getKey())) {
+                return false;
             }
+            gone.addAll(e.getValue());
+            return true;
         });
-        oldNames.clear();
         unregister(gone);
+    }
+
+    /**
+     * @return the symbolic names of the bundles whose old factories wait for a new revision
+     */
+    @NotNull
+    static Set<String> pendingSymbolicNames() {
+        return new LinkedHashSet<>(OLD_NAMES.keySet());
+    }
+
+    static void clearPending() {
+        OLD_NAMES.clear();
     }
 
     private void unregister(@NotNull Set<String> names) {

@@ -3,7 +3,6 @@ package com.intechcore.polarion.extension.hotreload.service;
 import com.intechcore.polarion.extension.hotreload.descriptor.DescriptorParser;
 import com.intechcore.polarion.extension.hotreload.descriptor.ExtensionDescriptor;
 import com.intechcore.polarion.extension.hotreload.inject.ContributionInjector;
-import com.intechcore.polarion.extension.hotreload.inject.PendingWorkflowHolders;
 import com.intechcore.polarion.extension.hotreload.inject.TomcatDeployer;
 import com.polarion.core.util.logging.Logger;
 import org.jetbrains.annotations.NotNull;
@@ -77,13 +76,13 @@ public class RedeployService {
             List<BundleChange> changes = scanner.scan(self.getSymbolicName());
             // Holders of a failed install whose jar is gone too: no jar and no bundle carry the name any more.
             // An unreadable jar can carry any name, so nothing counts as gone while one exists.
-            Set<String> orphaned = PendingWorkflowHolders.symbolicNames();
+            Set<String> orphaned = ContributionInjector.pendingSymbolicNames();
             orphaned.removeAll(scanner.getSymbolicNames());
             if (scanner.hasUnreadableJars()) {
                 orphaned.clear();
             }
             List<String> changeLines = new ArrayList<>(changes.stream().map(BundleChange::toString).toList());
-            orphaned.forEach(name -> changeLines.add("CLEANUP " + name + " (workflow contributions of a failed install)"));
+            orphaned.forEach(name -> changeLines.add("CLEANUP " + name + " (workflow contributions or job factories of a failed install)"));
             scanner.getWarnings().forEach(w -> log.add("WARNING " + w));
             if (scanner.isOwnJarChanged()) {
                 restartRequired.add(self.getSymbolicName() + ": this extension cannot reload itself, restart Polarion to use its new jar");
@@ -97,7 +96,7 @@ public class RedeployService {
             }
             try {
                 if (changes.isEmpty()) {
-                    Set<String> kept = PendingWorkflowHolders.symbolicNames();
+                    Set<String> kept = ContributionInjector.pendingSymbolicNames();
                     kept.removeAll(orphaned);
                     new ContributionInjector(log).finish(kept);
                 } else {
@@ -216,7 +215,7 @@ public class RedeployService {
         // Holders of other names wait too, unless the scan found them orphaned: their bundle is not in this rescan.
         Set<String> changed = new HashSet<>(running);
         changes.forEach(c -> changed.add(c.symbolicName()));
-        PendingWorkflowHolders.symbolicNames().stream()
+        ContributionInjector.pendingSymbolicNames().stream()
                 .filter(name -> !changed.contains(name) && !orphaned.contains(name))
                 .forEach(unfinished::add);
         injector.finish(unfinished);

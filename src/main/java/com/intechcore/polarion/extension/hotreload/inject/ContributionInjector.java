@@ -106,6 +106,16 @@ public class ContributionInjector {
         }
     }
 
+    /**
+     * @return the symbolic names of the bundles whose old workflow holders or job factories wait for a new revision
+     */
+    @NotNull
+    public static Set<String> pendingSymbolicNames() {
+        Set<String> names = PendingWorkflowHolders.symbolicNames();
+        names.addAll(JobUnitFactories.pendingSymbolicNames());
+        return names;
+    }
+
     // --- administration pages: AdministrationPageExtenderProvider (Guice singleton) ---
 
     /**

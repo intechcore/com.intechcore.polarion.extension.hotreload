@@ -5,6 +5,7 @@ import com.polarion.platform.jobs.IJobDescriptor;
 import com.polarion.platform.jobs.IJobUnit;
 import com.polarion.platform.jobs.IJobUnitFactory;
 import com.polarion.platform.jobs.internal.service.JobUnitRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -40,6 +41,12 @@ class JobUnitFactoriesTest {
     private final List<String> log = new ArrayList<>();
     private final JobUnitFactories factories = new JobUnitFactories(() -> repository, log);
     private final IJobUnitFactory polarion = mock(IJobUnitFactory.class);
+
+    @AfterEach
+    void tearDown() {
+        JobUnitFactories.clearPending();
+        PendingWorkflowHolders.clear();
+    }
 
     @Test
     void replacesTheFactoriesAndRemovesTheDroppedOnes() {
@@ -88,6 +95,28 @@ class JobUnitFactoriesTest {
         assertThat(repository.getAvailableFactoryNames()).containsExactly("my.failed.job");
         assertThat(repository.getJobUnitFactory("my.failed.job")).isSameAs(failed);
         assertThat(log).containsExactly("job unit factories: removed [my.gone.job]");
+    }
+
+    @Test
+    void removesAJobTheRecoveredRevisionDroppedAfterAFailedRescan() {
+        register("my.job");
+        register("my.dropped.job");
+
+        // The rescan that fails: the bundle does not come back.
+        factories.collect("my.ext", descriptor("my.job", "my.dropped.job"));
+        factories.finish(Set.of("my.ext"));
+
+        assertThat(repository.getAvailableFactoryNames()).containsExactlyInAnyOrder("my.job", "my.dropped.job");
+        assertThat(ContributionInjector.pendingSymbolicNames()).containsExactly("my.ext");
+
+        // The next rescan reads only the new descriptor, but still knows the old names.
+        JobUnitFactories next = new JobUnitFactories(() -> repository, log);
+        next.collect("my.ext", descriptor("my.job"));
+        next.replace("my.ext", descriptor("my.job"), className -> new NewFactory());
+        next.finish(Set.of());
+
+        assertThat(repository.getAvailableFactoryNames()).containsExactly("my.job");
+        assertThat(ContributionInjector.pendingSymbolicNames()).isEmpty();
     }
 
     @Test

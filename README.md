@@ -75,7 +75,7 @@ The extension compares the jars in the extensions folder with the running extens
 | Update | The content of the jar of a running extension differs from the content at startup or at the last rescan. |
 | Replace | The jar of a running extension has a new file name, for example after a version change. |
 | Uninstall | The jar of a running extension is gone. |
-| Cleanup | An extension failed to install, and its jar is gone. The workflow contributions it left are removed. |
+| Cleanup | An extension failed to install, and its jar is gone. The workflow contributions and job factories it left are removed. |
 
 Extensions that depend on a changed extension are refreshed too. The report lists every step.
 
