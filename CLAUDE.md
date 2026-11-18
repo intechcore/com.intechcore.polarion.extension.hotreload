@@ -36,7 +36,8 @@ mvn clean install -P local-install-into-polarion   # deploy into $POLARION_HOME
 - **This extension cannot redeploy itself.** A new build of it needs a Polarion restart. A rescan
   lists the new jar under "Restart required".
 - **The only real check is a rescan on a running Polarion.** `touch` does not make a jar count as
-  updated: the scanner compares SHA-256 hashes of the content. Change the content, for example add a
+  updated: the scanner compares SHA-256 hashes of the content. It falls back to the file time only for
+  a bundle whose jar could not be hashed at startup. Change the content, for example add a
   line to a file in the jar. An applied rescan also writes its report steps to the Polarion main log,
   with the prefix `hotreload:`. A dry run writes only to the report.
 
@@ -108,7 +109,7 @@ Two layers: a Java/Polarion backend and a React frontend.
   `UNINSTALL`. The higher `Bundle-Version` wins between two jars of one name. An unreadable jar is
   skipped and never uninstalls or replaces its bundle.
 - `service/JarFingerprints` - SHA-256 of each bundle's jar, taken at startup and after each applied
-  change. `UPDATE` means the content differs.
+  change. With a hash, `UPDATE` means the content differs.
 - `service/DescriptorCache` - the descriptors of the running revisions, for an uninstall after the jar
   is gone.
 - `inject/TomcatDeployer`, `inject/ContributionInjector` - swap Tomcat contexts and HiveMind

@@ -103,6 +103,10 @@ describe('Rescan', () => {
   it.each([
     ['message', { message: 'Only global administrators can redeploy extensions' }],
     ['errorMessage', { errorMessage: 'Only global administrators can redeploy extensions' }],
+    [
+      'errorMessage after an empty message',
+      { message: '', errorMessage: 'Only global administrators can redeploy extensions' },
+    ],
   ])('shows the %s of a rejected request', async (_, json) => {
     installFetchMock([{ method: 'GET', match: /\/changes$/, status: 403, json }]);
     render(<Rescan />);
