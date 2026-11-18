@@ -96,6 +96,7 @@ When a step fails, the extension puts back every extension that still resolves. 
 | Velocity context of LiveReport pages (`com.polarion.alm.richpages.velocityContext`) | `instance:` values only. Other values keep the startup object. |
 | Velocity context of wiki pages (`com.polarion.alm.wiki.renderingContext`) | `instance:` values only. Other values keep the startup object. |
 | Navigation extenders (`com.polarion.xray.webui.customNavigationExtenders`) | Yes |
+| Job unit factories (`com.polarion.platform.jobs.configuration`) | Yes, for a factory service built by a plain `<construct class>`. A running job finishes with the old code. |
 | HiveMind service implementations and interceptors (`<implementation>`) | No, restart required |
 | Guice modules (`Guice-Modules` manifest header) | No, restart required |
 | Other HiveMind configuration points | No, restart required |

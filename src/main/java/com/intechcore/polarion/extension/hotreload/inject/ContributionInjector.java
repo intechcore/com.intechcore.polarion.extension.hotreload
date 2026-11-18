@@ -54,6 +54,9 @@ public class ContributionInjector {
         replaceVelocityContext(descriptor.getVelocityContext(), oldClassLoader, Map.of());
         replaceRenderingContext(descriptor.getRenderingContext(), oldClassLoader, Map.of());
         removeNavigationExtenders(oldClassLoader);
+        if (!descriptor.getJobUnitFactories().isEmpty()) {
+            JobUnitFactories.lookup(log).remove(descriptor.getJobUnitFactories().keySet());
+        }
         collectWorkflowHolders(symbolicName, oldClassLoader);
     }
 
@@ -78,6 +81,9 @@ public class ContributionInjector {
         replaceVelocityContext(Map.of(), null, instantiateValues(descriptor.getVelocityContext(), bundle));
         replaceRenderingContext(Map.of(), null, instantiateValues(descriptor.getRenderingContext(), bundle));
         addNavigationExtenders(descriptor.getNavigationExtenderClasses(), bundle);
+        if (!descriptor.getJobUnitFactories().isEmpty()) {
+            JobUnitFactories.lookup(log).add(descriptor.getJobUnitFactories(), className -> Reflect.newInstance(loadClass(bundle, className)));
+        }
         repointWorkflowHolders(bundle);
         addWorkflowFunctions(descriptor.getWorkflowFunctions(), bundle);
     }

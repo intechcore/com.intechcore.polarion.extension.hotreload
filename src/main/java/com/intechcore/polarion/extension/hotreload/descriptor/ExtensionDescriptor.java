@@ -18,6 +18,7 @@ public class ExtensionDescriptor {
     public static final String RICH_PAGE_VELOCITY_CONTEXT = "com.polarion.alm.richpages.velocityContext";
     public static final String WIKI_RENDERING_CONTEXT = "com.polarion.alm.wiki.renderingContext";
     public static final String CUSTOM_NAVIGATION_EXTENDERS = "com.polarion.xray.webui.customNavigationExtenders";
+    public static final String JOB_UNIT_FACTORIES = "com.polarion.platform.jobs.configuration";
 
     public record Webapp(@NotNull String name, @NotNull String contextRoot, boolean hasErrorReporter) {
     }
@@ -36,6 +37,7 @@ public class ExtensionDescriptor {
     private final Map<String, String> velocityContext = new LinkedHashMap<>();
     private final Map<String, String> renderingContext = new LinkedHashMap<>();
     private final List<String> navigationExtenderClasses = new ArrayList<>();
+    private final Map<String, String> jobUnitFactories = new LinkedHashMap<>();
     private final List<String> restartRequiredReasons = new ArrayList<>();
     private final List<String> warnings = new ArrayList<>();
 
@@ -65,6 +67,13 @@ public class ExtensionDescriptor {
 
     public List<String> getNavigationExtenderClasses() {
         return navigationExtenderClasses;
+    }
+
+    /**
+     * @return the factory class names by job name
+     */
+    public Map<String, String> getJobUnitFactories() {
+        return jobUnitFactories;
     }
 
     public List<String> getRestartRequiredReasons() {

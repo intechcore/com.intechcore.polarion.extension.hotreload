@@ -31,7 +31,8 @@ public final class DescriptorParser {
             ExtensionDescriptor.RICH_PAGE_WIDGETS,
             ExtensionDescriptor.RICH_PAGE_VELOCITY_CONTEXT,
             ExtensionDescriptor.WIKI_RENDERING_CONTEXT,
-            ExtensionDescriptor.CUSTOM_NAVIGATION_EXTENDERS);
+            ExtensionDescriptor.CUSTOM_NAVIGATION_EXTENDERS,
+            ExtensionDescriptor.JOB_UNIT_FACTORIES);
 
     private static final String INSTANCE_PREFIX = "instance:";
     private static final String WEBAPPS = "com.polarion.portal.tomcat.webapps";
@@ -80,11 +81,17 @@ public final class DescriptorParser {
         String moduleId = module.getAttribute("id");
 
         Map<String, String> serviceClasses = new HashMap<>();
+        // Services a plain constructor call builds again: no properties, no initialize method.
+        Map<String, String> plainServiceClasses = new HashMap<>();
         for (Element servicePoint : children(module, "service-point")) {
             Element construct = firstDescendant(servicePoint, "construct");
             if (construct != null) {
-                serviceClasses.put(servicePoint.getAttribute("id"), construct.getAttribute("class"));
-                serviceClasses.put(moduleId + "." + servicePoint.getAttribute("id"), construct.getAttribute("class"));
+                String className = construct.getAttribute("class");
+                List<String> ids = List.of(servicePoint.getAttribute("id"), moduleId + "." + servicePoint.getAttribute("id"));
+                ids.forEach(id -> serviceClasses.put(id, className));
+                if (!construct.hasAttribute("initialize-method") && !hasChildElements(construct)) {
+                    ids.forEach(id -> plainServiceClasses.put(id, className));
+                }
             }
         }
 
@@ -120,9 +127,39 @@ public final class DescriptorParser {
                                 descriptor.getNavigationExtenderClasses().add(className);
                             }
                         });
+                case ExtensionDescriptor.JOB_UNIT_FACTORIES -> jobUnitFactories(contribution, plainServiceClasses, descriptor);
                 default -> throw new IllegalStateException(point);
             }
         }
+    }
+
+    private static void jobUnitFactories(@NotNull Element contribution, @NotNull Map<String, String> plainServiceClasses,
+                                         @NotNull ExtensionDescriptor descriptor) {
+        String point = ExtensionDescriptor.JOB_UNIT_FACTORIES;
+        for (Element factory : children(contribution, "jobUnitFactory")) {
+            String name = factory.getAttribute("name");
+            String serviceId = factory.getAttribute("factory");
+            String className = plainServiceClasses.get(serviceId);
+            if (className == null) {
+                descriptor.getRestartRequiredReasons().add(point + " job '" + name + "' (" + serviceId
+                        + "): only a factory service of this module built by a plain <construct class> is reloaded");
+            } else {
+                descriptor.getJobUnitFactories().put(name, className);
+            }
+        }
+        if (!children(contribution, "workDir").isEmpty()) {
+            descriptor.getRestartRequiredReasons().add(point + " workDir: the job service reads it once at startup");
+        }
+    }
+
+    private static boolean hasChildElements(@NotNull Element element) {
+        NodeList nodes = element.getChildNodes();
+        for (int i = 0; i < nodes.getLength(); i++) {
+            if (nodes.item(i) instanceof Element) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
