@@ -88,6 +88,7 @@ When a step fails, the extension puts back every extension that still resolves. 
 | Contribution | Refreshed |
 |---|---|
 | Web applications (`com.polarion.portal.tomcat.webapps` in `plugin.xml`) | Yes |
+| Scripts on every page (`com.polarion.portal.tomcat.externalJsFile` in `plugin.xml`) | Yes, Polarion serves them from the new revision. Browsers cache them for the Polarion build, so a changed file needs a cleared browser cache, also after a restart. |
 | Administration pages (`com.polarion.xray.webui.administrationPageExtenders`) | Yes |
 | Workflow functions (`com.polarion.alm.tracker.workflow.functions`) | Yes |
 | Workflow conditions, validators and signature policies | Existing ones use the new class. New ones need a restart. |

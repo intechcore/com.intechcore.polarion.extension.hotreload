@@ -36,6 +36,9 @@ class DescriptorParserTest {
                         <webapp name="polarion/b" contextRoot="webapp/b" errorReporter="x"/>
                     </extension>
                     <extension point="other.point"/>
+                    <extension point="com.polarion.portal.tomcat.externalJsFile">
+                        <file location="external-js/loader.js"/>
+                    </extension>
                 </plugin>
                 """;
 
@@ -44,7 +47,10 @@ class DescriptorParserTest {
         assertThat(descriptor.getWebapps()).containsExactly(
                 new ExtensionDescriptor.Webapp("polarion/a", "webapp/a", false),
                 new ExtensionDescriptor.Webapp("polarion/b", "webapp/b", true));
-        assertThat(descriptor.getWarnings()).containsExactly("plugin.xml extension point other.point is not refreshed");
+        assertThat(descriptor.getWarnings()).containsExactly(
+                "plugin.xml extension point other.point is not refreshed",
+                "plugin.xml extension point com.polarion.portal.tomcat.externalJsFile: the new files are served, but browsers"
+                        + " that loaded an old file keep it until their cache is cleared, also after a restart");
     }
 
     @Test

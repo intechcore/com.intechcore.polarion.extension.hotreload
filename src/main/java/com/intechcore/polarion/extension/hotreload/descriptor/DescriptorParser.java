@@ -34,6 +34,9 @@ public final class DescriptorParser {
             ExtensionDescriptor.CUSTOM_NAVIGATION_EXTENDERS);
 
     private static final String INSTANCE_PREFIX = "instance:";
+    private static final String WEBAPPS = "com.polarion.portal.tomcat.webapps";
+    /** Polarion reads it on every page load and file request, so the new revision is served at once. */
+    private static final String EXTERNAL_JS_FILE = "com.polarion.portal.tomcat.externalJsFile";
 
     private DescriptorParser() {
     }
@@ -56,7 +59,12 @@ public final class DescriptorParser {
     private static void parsePluginXml(@NotNull Document document, @NotNull ExtensionDescriptor descriptor) {
         for (Element extension : children(document.getDocumentElement(), "extension")) {
             String point = extension.getAttribute("point");
-            if (!"com.polarion.portal.tomcat.webapps".equals(point)) {
+            if (EXTERNAL_JS_FILE.equals(point)) {
+                descriptor.getWarnings().add("plugin.xml extension point " + point + ": the new files are served, but browsers"
+                        + " that loaded an old file keep it until their cache is cleared, also after a restart");
+                continue;
+            }
+            if (!WEBAPPS.equals(point)) {
                 descriptor.getWarnings().add("plugin.xml extension point " + point + " is not refreshed");
                 continue;
             }
