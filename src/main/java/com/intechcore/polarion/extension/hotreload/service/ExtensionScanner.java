@@ -37,6 +37,7 @@ public class ExtensionScanner {
     private final Path extensionsDir;
     private final List<String> warnings = new ArrayList<>();
     private final Set<Path> unreadableJars = new HashSet<>();
+    private final Set<String> symbolicNames = new HashSet<>();
 
     public ExtensionScanner(@NotNull BundleContext bundleContext) {
         this.bundleContext = bundleContext;
@@ -50,6 +51,9 @@ public class ExtensionScanner {
         unreadableJars.clear();
         Map<String, Path> jars = extensionJars();
         Map<String, Bundle> installed = installedExtensionBundles();
+        symbolicNames.clear();
+        symbolicNames.addAll(jars.keySet());
+        symbolicNames.addAll(installed.keySet());
         List<BundleChange> changes = new ArrayList<>();
 
         jars.forEach((symbolicName, jar) -> {
@@ -83,6 +87,14 @@ public class ExtensionScanner {
     @NotNull
     public List<String> getWarnings() {
         return warnings;
+    }
+
+    /**
+     * @return the symbolic names of the jars and installed extension bundles the last scan found
+     */
+    @NotNull
+    public Set<String> getSymbolicNames() {
+        return symbolicNames;
     }
 
     /**

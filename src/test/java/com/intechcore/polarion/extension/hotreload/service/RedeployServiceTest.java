@@ -2,6 +2,7 @@ package com.intechcore.polarion.extension.hotreload.service;
 
 import com.intechcore.polarion.extension.hotreload.descriptor.ExtensionDescriptor;
 import com.intechcore.polarion.extension.hotreload.inject.ContributionInjector;
+import com.intechcore.polarion.extension.hotreload.inject.PendingWorkflowHolders;
 import com.intechcore.polarion.extension.hotreload.inject.TomcatDeployer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,6 +29,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Hashtable;
 import java.util.List;
 import java.util.Map;
@@ -79,6 +81,7 @@ class RedeployServiceTest {
     private FrameworkEvent refreshError;
     private final List<FrameworkListener> frameworkListeners = new ArrayList<>();
     private final List<String> scannerWarnings = new ArrayList<>();
+    private final Set<String> scannedNames = new HashSet<>();
     private final Map<Bundle, Path> bundleJars = new HashMap<>();
     private boolean tomcatAccepts = true;
 
@@ -122,6 +125,7 @@ class RedeployServiceTest {
         scanners = mockConstruction(ExtensionScanner.class, (scanner, ctx) -> {
             when(scanner.scan("my.self")).thenAnswer(invocation -> changes);
             when(scanner.getWarnings()).thenAnswer(invocation -> scannerWarnings);
+            when(scanner.getSymbolicNames()).thenAnswer(invocation -> scannedNames);
             when(scanner.jarOf(any())).thenAnswer(invocation -> bundleJars.get(invocation.<Bundle>getArgument(0)));
             when(scanner.isExtensionBundle(any())).thenAnswer(invocation -> {
                 Bundle bundle = invocation.getArgument(0);
@@ -143,6 +147,7 @@ class RedeployServiceTest {
         frameworkUtil.close();
         allBundles.forEach(DescriptorCache::remove);
         allBundles.forEach(JarFingerprints::remove);
+        PendingWorkflowHolders.clear();
     }
 
     @Test
@@ -395,6 +400,24 @@ class RedeployServiceTest {
 
         assertThat(report.errors()).containsExactly("BundleException: broken jar");
         verify(injectors.constructed().get(0)).finish(Set.of("my.replaced"));
+    }
+
+    @Test
+    void removesTheWorkflowHoldersOfAFailedInstallWhoseJarIsGone() {
+        PendingWorkflowHolders.add("my.gone", Set.of(new Object()));
+        PendingWorkflowHolders.add("my.waiting", Set.of(new Object()));
+        scannedNames.add("my.waiting");
+
+        RescanReport dryRun = new RedeployService().rescan(false);
+
+        assertThat(dryRun.changes()).containsExactly("CLEANUP my.gone (workflow contributions of a failed install)");
+        assertThat(injectors.constructed()).isEmpty();
+
+        RescanReport report = new RedeployService().rescan(true);
+
+        assertThat(report.applied()).isTrue();
+        assertThat(report.errors()).isEmpty();
+        verify(injectors.constructed().get(0)).finish(Set.of("my.waiting"));
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.intechcore.polarion.extension.hotreload.service;
 import com.intechcore.polarion.extension.hotreload.descriptor.DescriptorParser;
 import com.intechcore.polarion.extension.hotreload.descriptor.ExtensionDescriptor;
 import com.intechcore.polarion.extension.hotreload.inject.ContributionInjector;
+import com.intechcore.polarion.extension.hotreload.inject.PendingWorkflowHolders;
 import com.intechcore.polarion.extension.hotreload.inject.TomcatDeployer;
 import com.polarion.core.util.logging.Logger;
 import org.jetbrains.annotations.NotNull;
@@ -74,17 +75,28 @@ public class RedeployService {
             List<String> errors = new ArrayList<>();
             ExtensionScanner scanner = new ExtensionScanner(bundleContext);
             List<BundleChange> changes = scanner.scan(self.getSymbolicName());
-            List<String> changeLines = changes.stream().map(BundleChange::toString).toList();
+            // Holders of a failed install whose jar is gone too: no jar and no bundle carry the name any more.
+            Set<String> orphaned = PendingWorkflowHolders.symbolicNames();
+            orphaned.removeAll(scanner.getSymbolicNames());
+            List<String> changeLines = new ArrayList<>(changes.stream().map(BundleChange::toString).toList());
+            orphaned.forEach(name -> changeLines.add("CLEANUP " + name + " (workflow contributions of a failed install)"));
             scanner.getWarnings().forEach(w -> log.add("WARNING " + w));
 
-            if (!apply || changes.isEmpty()) {
-                if (changes.isEmpty()) {
+            if (!apply || changeLines.isEmpty()) {
+                if (changeLines.isEmpty()) {
                     log.add("nothing changed");
                 }
                 return new RescanReport(false, changeLines, log, restartRequired, errors);
             }
             try {
-                apply(changes, scanner, log, restartRequired, errors);
+                if (changes.isEmpty()) {
+                    Set<String> kept = PendingWorkflowHolders.symbolicNames();
+                    kept.removeAll(orphaned);
+                    new ContributionInjector(log).finish(kept);
+                } else {
+                    // finish() at the end removes the orphaned holders too: they are never unfinished.
+                    apply(changes, scanner, log, restartRequired, errors);
+                }
             } catch (Exception e) {
                 if (e instanceof InterruptedException) {
                     Thread.currentThread().interrupt();

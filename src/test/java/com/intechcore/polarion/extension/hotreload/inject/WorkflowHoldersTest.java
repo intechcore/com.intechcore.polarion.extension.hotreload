@@ -65,7 +65,7 @@ class WorkflowHoldersTest {
 
     @AfterEach
     void tearDown() {
-        new ContributionInjector(new ArrayList<>()).finish(Set.of());
+        PendingWorkflowHolders.clear();
         platformContext.close();
     }
 

@@ -36,13 +36,6 @@ public class ContributionInjector {
 
     private final List<String> log;
 
-    /**
-     * Workflow holders of the old revisions, by bundle symbolic name, waiting for the class of the new revision. It
-     * outlives one rescan: the holders of a bundle that did not come back wait for the next one. The rescan lock of
-     * RedeployService guards it.
-     */
-    private static final Map<String, Set<Object>> PENDING_WORKFLOW_HOLDERS = new LinkedHashMap<>();
-
     public ContributionInjector(@NotNull List<String> log) {
         this.log = log;
     }
@@ -96,14 +89,7 @@ public class ContributionInjector {
      * @param unfinished the symbolic names of the bundles that did not come back
      */
     public void finish(@NotNull Set<String> unfinished) {
-        Set<Object> unclaimed = Collections.newSetFromMap(new IdentityHashMap<>());
-        PENDING_WORKFLOW_HOLDERS.entrySet().removeIf(e -> {
-            if (unfinished.contains(e.getKey())) {
-                return false;
-            }
-            unclaimed.addAll(e.getValue());
-            return true;
-        });
+        Set<Object> unclaimed = PendingWorkflowHolders.takeAllExcept(unfinished);
         if (unclaimed.isEmpty()) {
             return;
         }
@@ -395,7 +381,7 @@ public class ContributionInjector {
         }
         Set<Object> holders = contributions.holders(c -> c.getClassLoader() == oldClassLoader);
         if (!holders.isEmpty()) {
-            PENDING_WORKFLOW_HOLDERS.computeIfAbsent(symbolicName, k -> Collections.newSetFromMap(new IdentityHashMap<>())).addAll(holders);
+            PendingWorkflowHolders.add(symbolicName, holders);
         }
     }
 
@@ -407,7 +393,7 @@ public class ContributionInjector {
      * validators and signature policies have no descriptor here, so they keep their holder.
      */
     void repointWorkflowHolders(@NotNull Bundle bundle) {
-        Set<Object> holders = PENDING_WORKFLOW_HOLDERS.remove(bundle.getSymbolicName());
+        Set<Object> holders = PendingWorkflowHolders.take(bundle.getSymbolicName());
         if (holders == null) {
             return;
         }
