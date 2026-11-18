@@ -84,6 +84,7 @@ class RedeployServiceTest {
     private final Set<String> scannedNames = new HashSet<>();
     private boolean unreadableJars;
     private boolean ownJarChanged;
+    private boolean selfInExtensions;
     private final Map<Bundle, Path> bundleJars = new HashMap<>();
     private boolean tomcatAccepts = true;
 
@@ -133,7 +134,7 @@ class RedeployServiceTest {
             when(scanner.jarOf(any())).thenAnswer(invocation -> bundleJars.get(invocation.<Bundle>getArgument(0)));
             when(scanner.isExtensionBundle(any())).thenAnswer(invocation -> {
                 Bundle bundle = invocation.getArgument(0);
-                return bundle != self && !nonExtensionBundles.contains(bundle);
+                return (bundle != self || selfInExtensions) && !nonExtensionBundles.contains(bundle);
             });
         });
         tomcats = mockConstruction(TomcatDeployer.class, (tomcat, ctx) -> {
@@ -542,6 +543,9 @@ class RedeployServiceTest {
     @Test
     void snapshotsTheDescriptorsOfEveryInstalledExtension() throws Exception {
         allBundles.add(self);
+        // As in Polarion: this extension lives in the extensions folder too.
+        selfInExtensions = true;
+        bundleJars.put(self, Files.writeString(tempDir.resolve("my.self.jar"), "self"));
         Bundle extension = extension("my.ext", 10);
         Bundle broken = extension("my.broken", 11);
         when(broken.getEntry("plugin.xml")).thenReturn(file("broken.xml", "<plugin>"));
@@ -562,7 +566,8 @@ class RedeployServiceTest {
         // The hash still detects a later build of a jar whose descriptors cannot be read.
         assertThat(JarFingerprints.get(broken)).isNotNull();
         assertThat(DescriptorCache.get(gone)).isNull();
-        assertThat(DescriptorCache.get(self)).isNull();
+        // Its hash tells whether a new jar of it waits for a restart.
+        assertThat(JarFingerprints.get(self)).isEqualTo(JarFingerprints.of(tempDir.resolve("my.self.jar")));
     }
 
     private Bundle extension(String symbolicName, long id) throws IOException {
