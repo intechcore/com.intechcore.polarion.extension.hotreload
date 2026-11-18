@@ -50,14 +50,14 @@ mvn clean install -P local-install-into-polarion
 
 The `POLARION_HOME` environment variable must point to the Polarion installation folder.
 
-This extension takes effect only after a restart of Polarion. It cannot redeploy itself.
+This extension takes effect only after a restart of Polarion. It cannot redeploy itself: a rescan lists a new jar of it under "Restart required".
 
 GitHub releases carry a signed provenance bundle. Verify a downloaded jar with
 `gh attestation verify <file> --repo intechcore/com.intechcore.polarion.extension.hotreload`.
 
 ## Polarion configuration
 
-The extension adds the **Hot Reload** section to the Administration menu of the global scope. The section holds the **Rescan Extensions**, **About**, **Disclaimer** and **REST API** pages. Only global administrators can run a rescan.
+The extension adds the **Hot Reload** section to the Administration menu of the global scope. The section holds the **About**, **Disclaimer**, **REST API** and **Rescan Extensions** pages. Only global administrators can run a rescan.
 
 ## Usage
 

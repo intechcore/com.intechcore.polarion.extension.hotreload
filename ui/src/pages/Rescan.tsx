@@ -32,7 +32,9 @@ function Section({ title, items, error = false }: Readonly<{ title: string; item
 async function failureMessage(response: Response): Promise<string> {
   const text = await response.text();
   try {
-    const message = (JSON.parse(text) as { errorMessage?: string }).errorMessage;
+    // The generic exception mappers send `message`; the network fallback of useRemote sends `errorMessage`.
+    const json = JSON.parse(text) as { message?: string; errorMessage?: string };
+    const message = [json.message, json.errorMessage].find(Boolean);
     if (message) return `HTTP ${response.status}: ${message}`;
   } catch {
     // Not JSON: show the body as it is.

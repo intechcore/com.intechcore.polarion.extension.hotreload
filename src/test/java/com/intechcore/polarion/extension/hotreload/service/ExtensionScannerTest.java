@@ -165,7 +165,38 @@ class ExtensionScannerTest {
         Files.createDirectories(installDir.resolve("extensions/no-plugins"));
         bundle(SELF, "reference:file:extensions/self/eclipse/plugins/old-self.jar", 0);
 
-        assertThat(new ExtensionScanner(bundleContext).scan(SELF)).isEmpty();
+        ExtensionScanner scanner = new ExtensionScanner(bundleContext);
+
+        assertThat(scanner.scan(SELF)).isEmpty();
+        assertThat(scanner.isOwnJarChanged()).isTrue();
+    }
+
+    @Test
+    void doesNotReportAnOlderJarOfItselfWhileTheRunningOneCannotBeRead() throws IOException {
+        Path plugins = Files.createDirectories(installDir.resolve("extensions/self/eclipse/plugins"));
+        Path running = Files.writeString(plugins.resolve("self-2.0.jar"), "half copied");
+        jar("self", "self-1.0.jar", SELF, "1.0.0");
+        bundle(SELF, ExtensionScanner.installLocation(running), 0);
+        ExtensionScanner scanner = new ExtensionScanner(bundleContext);
+
+        assertThat(scanner.scan(SELF)).isEmpty();
+        assertThat(scanner.isOwnJarChanged()).isFalse();
+    }
+
+    @Test
+    void reportsANewJarOfItselfOnlyWhenItsContentChanged() throws IOException {
+        Path jar = jar("self", "self.jar", SELF, false);
+        Bundle self = bundle(SELF, ExtensionScanner.installLocation(jar), 0);
+        JarFingerprints.put(self, jar);
+        ExtensionScanner scanner = new ExtensionScanner(bundleContext);
+
+        assertThat(scanner.scan(SELF)).isEmpty();
+        assertThat(scanner.isOwnJarChanged()).isFalse();
+
+        jar("self", "self.jar", SELF, "2.0.0");
+
+        assertThat(scanner.scan(SELF)).isEmpty();
+        assertThat(scanner.isOwnJarChanged()).isTrue();
     }
 
     @Test
