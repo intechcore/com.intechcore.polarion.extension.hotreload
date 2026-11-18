@@ -120,6 +120,10 @@ Two layers: a Java/Polarion backend and a React frontend.
   are created again from the descriptor.
 - `inject/PendingWorkflowHolders` - workflow holders of a bundle that did not come back. They wait
   across rescans. A rescan reports `CLEANUP` when their jar is gone too.
+- `inject/JobUnitFactories` - replaces the job unit factories through the public `IJobUnitRepository`
+  API. The scheduler looks a factory up by name for each run. An old factory stays until the new
+  revision registers its own. The old job names wait across rescans, like the workflow holders, and
+  `CLEANUP` covers them. `Import-Package` lists `com.polarion.platform.jobs` for it.
 - `descriptor/DescriptorParser` - reads `plugin.xml`, `hivemodule.xml` and `Guice-Modules`.
 - `DescriptorSnapshotListener` - fills `DescriptorCache` and builds lazy services at server start.
 - `HotReloadAppServlet` - a `GenericUiServlet` subclass serving the
@@ -147,8 +151,9 @@ extension-less paths.
 
 Rescan internals:
 
-- **No public API.** Polarion has no API for any of this. Every internal goes through
-  `internal/Reflect`, which loads classes from their owning bundle. A Polarion upgrade breaks it at
+- **No public API.** Polarion has no API for most of this. Every internal goes through
+  `internal/Reflect`, which loads classes from their owning bundle. Job unit factories are the
+  exception: they use the public jobs API. A Polarion upgrade breaks it at
   runtime, not at build.
 - **HiveMind proxies.** Services from `hivemodule.xml` are wrapped in up to three proxies (`_inner`,
   `_serviceModel`, `_service`). Compare class loaders only after `Reflect.unwrapHiveMindProxy`.

@@ -75,7 +75,7 @@ The extension compares the jars in the extensions folder with the running extens
 | Update | The content of the jar of a running extension differs from the content at startup or at the last rescan. |
 | Replace | The jar of a running extension has a new file name, for example after a version change. |
 | Uninstall | The jar of a running extension is gone. |
-| Cleanup | An extension failed to install, and its jar is gone. The workflow contributions it left are removed. |
+| Cleanup | An extension failed to install, and its jar is gone. The workflow contributions and job factories it left are removed. |
 
 Extensions that depend on a changed extension are refreshed too. The report lists every step.
 
@@ -96,6 +96,7 @@ When a step fails, the extension puts back every extension that still resolves. 
 | Velocity context of LiveReport pages (`com.polarion.alm.richpages.velocityContext`) | `instance:` values only. Other values keep the startup object. |
 | Velocity context of wiki pages (`com.polarion.alm.wiki.renderingContext`) | `instance:` values only. Other values keep the startup object. |
 | Navigation extenders (`com.polarion.xray.webui.customNavigationExtenders`) | Yes |
+| Job unit factories (`com.polarion.platform.jobs.configuration`) | Yes, for a factory service built by a plain `<construct class>`. A running job finishes with the old code. |
 | HiveMind service implementations and interceptors (`<implementation>`) | No, restart required |
 | Guice modules (`Guice-Modules` manifest header) | No, restart required |
 | Other HiveMind configuration points | No, restart required |

@@ -54,8 +54,9 @@
         <maven-jar-plugin.Bundle-Vendor>Intechcore GmbH</maven-jar-plugin.Bundle-Vendor>
         <maven-jar-plugin.Support-Email>polarion@intechcore.com</maven-jar-plugin.Support-Email>
 
-        <!-- Bundle install, update and refresh go through the OSGi wiring and start level APIs. -->
-        <maven-jar-plugin.Import-Package>org.osgi.framework,org.osgi.framework.wiring,org.osgi.framework.startlevel</maven-jar-plugin.Import-Package>
+        <!-- Bundle install, update and refresh go through the OSGi wiring and start level APIs.
+             Job unit factories go through the job unit repository of the jobs bundle. -->
+        <maven-jar-plugin.Import-Package>org.osgi.framework,org.osgi.framework.wiring,org.osgi.framework.startlevel,com.polarion.platform.jobs</maven-jar-plugin.Import-Package>
 
         <web.app.name>${maven-jar-plugin.Extension-Context}</web.app.name>
 

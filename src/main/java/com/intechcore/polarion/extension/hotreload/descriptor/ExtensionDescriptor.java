@@ -4,8 +4,10 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * What one extension bundle contributes through {@code plugin.xml} and {@code META-INF/hivemodule.xml}.
@@ -18,6 +20,7 @@ public class ExtensionDescriptor {
     public static final String RICH_PAGE_VELOCITY_CONTEXT = "com.polarion.alm.richpages.velocityContext";
     public static final String WIKI_RENDERING_CONTEXT = "com.polarion.alm.wiki.renderingContext";
     public static final String CUSTOM_NAVIGATION_EXTENDERS = "com.polarion.xray.webui.customNavigationExtenders";
+    public static final String JOB_UNIT_FACTORIES = "com.polarion.platform.jobs.configuration";
 
     public record Webapp(@NotNull String name, @NotNull String contextRoot, boolean hasErrorReporter) {
     }
@@ -36,6 +39,8 @@ public class ExtensionDescriptor {
     private final Map<String, String> velocityContext = new LinkedHashMap<>();
     private final Map<String, String> renderingContext = new LinkedHashMap<>();
     private final List<String> navigationExtenderClasses = new ArrayList<>();
+    private final Map<String, String> jobUnitFactories = new LinkedHashMap<>();
+    private final Set<String> jobsNeedingRestart = new LinkedHashSet<>();
     private final List<String> restartRequiredReasons = new ArrayList<>();
     private final List<String> warnings = new ArrayList<>();
 
@@ -65,6 +70,20 @@ public class ExtensionDescriptor {
 
     public List<String> getNavigationExtenderClasses() {
         return navigationExtenderClasses;
+    }
+
+    /**
+     * @return the factory class names by job name
+     */
+    public Map<String, String> getJobUnitFactories() {
+        return jobUnitFactories;
+    }
+
+    /**
+     * @return the job names whose factory a rescan cannot build
+     */
+    public Set<String> getJobsNeedingRestart() {
+        return jobsNeedingRestart;
     }
 
     public List<String> getRestartRequiredReasons() {

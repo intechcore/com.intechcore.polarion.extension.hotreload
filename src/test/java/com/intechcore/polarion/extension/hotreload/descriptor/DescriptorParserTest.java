@@ -144,6 +144,43 @@ class DescriptorParserTest {
     }
 
     @Test
+    void readsJobUnitFactoriesAPlainConstructorBuilds() {
+        String hivemodule = """
+                <module id="my.module">
+                    <service-point id="plainFactory" interface="com.polarion.platform.jobs.IJobUnitFactory">
+                        <invoke-factory><construct class="my.PlainFactory"/></invoke-factory>
+                    </service-point>
+                    <service-point id="configuredFactory" interface="com.polarion.platform.jobs.IJobUnitFactory">
+                        <invoke-factory><construct class="my.ConfiguredFactory"><set property="a" value="b"/></construct></invoke-factory>
+                    </service-point>
+                    <service-point id="initializedFactory" interface="com.polarion.platform.jobs.IJobUnitFactory">
+                        <invoke-factory><construct class="my.InitializedFactory" initialize-method="init"/></invoke-factory>
+                    </service-point>
+                    <service-point id="guiceFactory" interface="com.polarion.platform.jobs.IJobUnitFactory">
+                        <invoke-factory service-id="com.siemens.polarion.platform.guice.factory"/>
+                    </service-point>
+                    <contribution configuration-id="com.polarion.platform.jobs.configuration">
+                        <jobUnitFactory name="plain.job" factory="my.module.plainFactory"/>
+                        <jobUnitFactory name="configured.job" factory="configuredFactory"/>
+                        <jobUnitFactory name="initialized.job" factory="initializedFactory"/>
+                        <jobUnitFactory name="guice.job" factory="guiceFactory"/>
+                        <workDir dir="/tmp/jobs"/>
+                    </contribution>
+                </module>
+                """;
+
+        ExtensionDescriptor descriptor = DescriptorParser.parse(null, xml(hivemodule), null);
+
+        assertThat(descriptor.getJobUnitFactories()).containsExactly(Map.entry("plain.job", "my.PlainFactory"));
+        assertThat(descriptor.getJobsNeedingRestart()).containsExactly("configured.job", "initialized.job", "guice.job");
+        assertThat(descriptor.getRestartRequiredReasons()).hasSize(4)
+                .anyMatch(r -> r.contains("job 'configured.job'"))
+                .anyMatch(r -> r.contains("job 'initialized.job'"))
+                .anyMatch(r -> r.contains("job 'guice.job'"))
+                .anyMatch(r -> r.contains("workDir"));
+    }
+
+    @Test
     void ignoresABlankGuiceModulesHeader() {
         assertThat(DescriptorParser.parse(null, null, "  ").getRestartRequiredReasons()).isEmpty();
     }
