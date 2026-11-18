@@ -83,6 +83,8 @@ class RedeployServiceTest {
     private final List<String> scannerWarnings = new ArrayList<>();
     private final Set<String> scannedNames = new HashSet<>();
     private boolean unreadableJars;
+    private boolean ownJarChanged;
+    private boolean selfInExtensions;
     private final Map<Bundle, Path> bundleJars = new HashMap<>();
     private boolean tomcatAccepts = true;
 
@@ -128,10 +130,11 @@ class RedeployServiceTest {
             when(scanner.getWarnings()).thenAnswer(invocation -> scannerWarnings);
             when(scanner.getSymbolicNames()).thenAnswer(invocation -> scannedNames);
             when(scanner.hasUnreadableJars()).thenAnswer(invocation -> unreadableJars);
+            when(scanner.isOwnJarChanged()).thenAnswer(invocation -> ownJarChanged);
             when(scanner.jarOf(any())).thenAnswer(invocation -> bundleJars.get(invocation.<Bundle>getArgument(0)));
             when(scanner.isExtensionBundle(any())).thenAnswer(invocation -> {
                 Bundle bundle = invocation.getArgument(0);
-                return bundle != self && !nonExtensionBundles.contains(bundle);
+                return (bundle != self || selfInExtensions) && !nonExtensionBundles.contains(bundle);
             });
         });
         tomcats = mockConstruction(TomcatDeployer.class, (tomcat, ctx) -> {
@@ -487,6 +490,17 @@ class RedeployServiceTest {
     }
 
     @Test
+    void asksForARestartForANewJarOfItself() {
+        ownJarChanged = true;
+
+        RescanReport report = new RedeployService().rescan(false);
+
+        assertThat(report.restartRequired())
+                .containsExactly("my.self: this extension cannot reload itself, restart Polarion to use its new jar");
+        assertThat(report.log()).containsExactly("nothing changed");
+    }
+
+    @Test
     void logsTheScannerWarnings() {
         scannerWarnings.add("two jars for my.ext: a.jar and b.jar, using b.jar; remove the other one");
 
@@ -529,12 +543,16 @@ class RedeployServiceTest {
     @Test
     void snapshotsTheDescriptorsOfEveryInstalledExtension() throws Exception {
         allBundles.add(self);
+        // As in Polarion: this extension lives in the extensions folder too.
+        selfInExtensions = true;
+        bundleJars.put(self, Files.writeString(tempDir.resolve("my.self.jar"), "self"));
         Bundle extension = extension("my.ext", 10);
         Bundle broken = extension("my.broken", 11);
         when(broken.getEntry("plugin.xml")).thenReturn(file("broken.xml", "<plugin>"));
         Bundle gone = extension("my.gone", 12);
         states.put(gone, Bundle.UNINSTALLED);
         bundleJars.put(extension, Files.writeString(tempDir.resolve("my.ext.jar"), "content"));
+        bundleJars.put(broken, Files.writeString(tempDir.resolve("my.broken.jar"), "broken"));
 
         try (MockedStatic<ContributionInjector> lazy = mockStatic(ContributionInjector.class)) {
             lazy.when(ContributionInjector::buildLazyServices).thenThrow(new IllegalStateException("no tracker"));
@@ -545,8 +563,11 @@ class RedeployServiceTest {
         assertThat(DescriptorCache.get(extension)).isNotNull();
         assertThat(JarFingerprints.get(extension)).isNotNull();
         assertThat(DescriptorCache.get(broken)).isNull();
+        // The hash still detects a later build of a jar whose descriptors cannot be read.
+        assertThat(JarFingerprints.get(broken)).isNotNull();
         assertThat(DescriptorCache.get(gone)).isNull();
-        assertThat(DescriptorCache.get(self)).isNull();
+        // Its hash tells whether a new jar of it waits for a restart.
+        assertThat(JarFingerprints.get(self)).isEqualTo(JarFingerprints.of(tempDir.resolve("my.self.jar")));
     }
 
     private Bundle extension(String symbolicName, long id) throws IOException {

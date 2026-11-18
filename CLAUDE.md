@@ -10,7 +10,7 @@ and uninstalls other extensions in a running Polarion. It builds on the SBB
 **Polarion 2606 / Tomcat 11 / Jakarta EE 11**.
 
 It adds the **Hot Reload** section to the global Administration menu with four pages:
-Rescan Extensions, About, Disclaimer and REST API. It has no settings yet.
+About, Disclaimer, REST API and Rescan Extensions. It has no settings yet.
 
 ## Build & verify
 
@@ -33,9 +33,13 @@ mvn clean install -P local-install-into-polarion   # deploy into $POLARION_HOME
   (`__PIXEL_REFERENCES__`). Regenerate only with `npm run test:update:docker`, never by hand.
 - **After a failed `local-install-into-polarion`, check the jar landed.** A failure empties this
   extension's own plugins directory, and Polarion then starts without the extension.
-- **This extension cannot redeploy itself.** A new build of it needs a Polarion restart.
-- **The only real check is a rescan on a running Polarion.** Touch an extension jar to make it
-  count as updated. Every rescan step is logged with the prefix `hotreload:` in the Polarion main log.
+- **This extension cannot redeploy itself.** A new build of it needs a Polarion restart. A rescan
+  lists the new jar under "Restart required".
+- **The only real check is a rescan on a running Polarion.** `touch` does not make a jar count as
+  updated: the scanner compares SHA-256 hashes of the content. It falls back to the file time only for
+  a bundle whose jar could not be hashed at startup. Change the content, for example add a
+  line to a file in the jar. An applied rescan also writes its report steps to the Polarion main log,
+  with the prefix `hotreload:`. A dry run writes only to the report.
 
 UI dev loop (hot reload against a running Polarion):
 
@@ -92,14 +96,30 @@ Two layers: a Java/Polarion backend and a React frontend.
 - `rest/HotReloadRestApplication` - a `GenericRestApplication` with the two rescan controllers. It
   registers no settings, so generic serves no settings endpoints.
 - `rest/controller/HotReloadInternalController` - session-authenticated `/internal/changes` and
-  `/internal/rescan` for the Rescan page, `@Hidden`, global administrators only.
+  `/internal/rescan` for the Rescan page, `@Hidden`, global administrators only. The rescan requires
+  the header `X-Requested-With: XMLHttpRequest` against cross-site requests.
 - `rest/controller/HotReloadApiController` - the PAT-authenticated `/api` twin. It runs the internal
   controller as the token user through `ISecurityService.doAsUser`.
 - `rest/controller/OpenAPIInfo` - the annotation the swagger plugin turns into `docs/openapi.json`.
 - `service/RedeployService` - the rescan: finds changes (`ExtensionScanner`), takes old contexts and
-  contributions out, changes and refreshes the bundles, then puts the new ones back.
+  contributions out, changes and refreshes the bundles, then puts the new ones back. After a failed bundle
+  change it still refreshes and puts back every bundle that resolves. A bundle that did not come back
+  stays a change. A refresh timeout or an interrupt stops the rescan before the put-back: then restart.
+- `service/ExtensionScanner` - compares the jars with the bundles: `INSTALL`, `UPDATE`, `REPLACE`,
+  `UNINSTALL`. The higher `Bundle-Version` wins between two jars of one name. An unreadable jar is
+  skipped and never uninstalls or replaces its bundle.
+- `service/JarFingerprints` - SHA-256 of each bundle's jar, taken at startup and after each applied
+  change. With a hash, `UPDATE` means the content differs.
+- `service/DescriptorCache` - the descriptors of the running revisions, for an uninstall after the jar
+  is gone.
 - `inject/TomcatDeployer`, `inject/ContributionInjector` - swap Tomcat contexts and HiveMind
-  contributions inside Polarion's singletons. `internal/Reflect` does every reflective call.
+  contributions inside Polarion's singletons. Shared maps are replaced by a changed copy, never changed
+  in place. `internal/Reflect` does every reflective call.
+- `inject/WorkflowContributions` - the internal maps of `ContributionsManager`. Conditions, validators
+  and signature policies keep their holder and get the class of the new revision. Workflow functions
+  are created again from the descriptor.
+- `inject/PendingWorkflowHolders` - workflow holders of a bundle that did not come back. They wait
+  across rescans. A rescan reports `CLEANUP` when their jar is gone too.
 - `descriptor/DescriptorParser` - reads `plugin.xml`, `hivemodule.xml` and `Guice-Modules`.
 - `DescriptorSnapshotListener` - fills `DescriptorCache` and builds lazy services at server start.
 - `HotReloadAppServlet` - a `GenericUiServlet` subclass serving the

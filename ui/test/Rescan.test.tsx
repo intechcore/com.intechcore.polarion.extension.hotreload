@@ -100,15 +100,15 @@ describe('Rescan', () => {
     await vi.waitFor(() => expect(button('Show changes').disabled).toBe(false));
   });
 
-  it('shows the error message of a rejected request', async () => {
-    installFetchMock([
-      {
-        method: 'GET',
-        match: /\/changes$/,
-        status: 403,
-        json: { errorMessage: 'Only global administrators can redeploy extensions' },
-      },
-    ]);
+  it.each([
+    ['message', { message: 'Only global administrators can redeploy extensions' }],
+    ['errorMessage', { errorMessage: 'Only global administrators can redeploy extensions' }],
+    [
+      'errorMessage after an empty message',
+      { message: '', errorMessage: 'Only global administrators can redeploy extensions' },
+    ],
+  ])('shows the %s of a rejected request', async (_, json) => {
+    installFetchMock([{ method: 'GET', match: /\/changes$/, status: 403, json }]);
     render(<Rescan />);
 
     await click('Show changes');

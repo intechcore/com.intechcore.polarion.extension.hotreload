@@ -85,6 +85,9 @@ public class RedeployService {
             List<String> changeLines = new ArrayList<>(changes.stream().map(BundleChange::toString).toList());
             orphaned.forEach(name -> changeLines.add("CLEANUP " + name + " (workflow contributions of a failed install)"));
             scanner.getWarnings().forEach(w -> log.add("WARNING " + w));
+            if (scanner.isOwnJarChanged()) {
+                restartRequired.add(self.getSymbolicName() + ": this extension cannot reload itself, restart Polarion to use its new jar");
+            }
 
             if (!apply || changeLines.isEmpty()) {
                 if (changeLines.isEmpty()) {
@@ -387,13 +390,18 @@ public class RedeployService {
         }
         ExtensionScanner scanner = new ExtensionScanner(bundleContext);
         for (Bundle bundle : bundleContext.getBundles()) {
-            if (bundle.getState() != Bundle.UNINSTALLED && !bundle.equals(self) && scanner.isExtensionBundle(bundle)) {
+            // This extension too: its fingerprint tells whether a new jar of it waits for a restart.
+            if (bundle.getState() != Bundle.UNINSTALLED && scanner.isExtensionBundle(bundle)) {
                 try {
-                    DescriptorCache.put(bundle, descriptor(bundle));
                     Path jar = scanner.jarOf(bundle);
                     if (jar != null && Files.isRegularFile(jar)) {
                         JarFingerprints.put(bundle, jar);
                     }
+                } catch (RuntimeException e) {
+                    logger.warn("hotreload: cannot hash the jar of " + bundle.getSymbolicName(), e);
+                }
+                try {
+                    DescriptorCache.put(bundle, descriptor(bundle));
                 } catch (RuntimeException e) {
                     logger.warn("hotreload: cannot read descriptors of " + bundle.getSymbolicName(), e);
                 }
