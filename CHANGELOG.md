@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-26
+
 ### Added
 - The extension skeleton: About, Disclaimer and REST API pages in the global Administration menu.
 - Rescan of the extensions folder: installs, updates, replaces and uninstalls extension bundles without a restart.
